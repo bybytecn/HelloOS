@@ -28,7 +28,7 @@ ENTRY(start)
 SECTIONS
 {
 	. = 0x100000;
-
+	PROVIDE( g_kern_start = . );
 	.text :
 	{
 		*(.text)
@@ -55,6 +55,6 @@ SECTIONS
 		*(.stabstr)
 	 	. = ALIGN(4096);
 	}
-	
+	PROVIDE( g_kern_end = . );
 	/DISCARD/ : { *(.comment) *(.eh_frame) }
 }
