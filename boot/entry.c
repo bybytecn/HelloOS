@@ -1,9 +1,11 @@
 #include "../kernel/include/console.h"
 #include "../kernel/include/multiboot.h"
 #include "../kernel/include/debug.h"
+#include "../kernel/include/mm.h"
 int entry(struct multiboot_t *mtb)
 {
     init_debug(mtb);
+    init_mm(mtb);
     kprintf("HelloOS!");
     while (1)
     {
