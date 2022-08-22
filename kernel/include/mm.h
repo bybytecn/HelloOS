@@ -3,7 +3,12 @@
 #include "./multiboot.h"
 #define MAX_FREE_BLOCK_NUM 128
 #define MAX_ALLOC_BLOCK_NUM 128 * 3
-#define TOHM(a) a + 0xc0000000 // 0-4M的内存转换到高1G上，否则会读取错误
+#define TOHM(a) ((uint32_t)a + 0xc0000000) // 0-4M的内存转换到高1G上，否则会读取错误
+#define KERNEL_LIMIT 0x400000              // 4M以上的内存没在页表内
+
+#define PAGE_PRESENT 0x1
+#define PAGE_WRITE 0x2
+#define PAGE_USER_ACCESS 0x4
 /**
  * size是相关结构的大小，单位是字节，它可能大于最小值20
  * base_addr_low是启动地址的低32位，base_addr_high是高32位，启动地址总共有64位
@@ -30,6 +35,34 @@ struct mm_manager_t
     struct mm_block_t free_area[MAX_FREE_BLOCK_NUM];
     struct mm_block_t alloc_area[MAX_ALLOC_BLOCK_NUM];
 };
+struct pde_t
+{
+    uint32_t present : 1;
+    uint32_t rw : 1;
+    uint32_t user : 1;
+    uint32_t pwt : 1;
+    uint32_t pcd : 1;
+    uint32_t accessed : 1;
+    uint32_t dirty : 1;
+    uint32_t pat : 1;
+    uint32_t global : 1;
+    uint32_t avail : 3;
+    uint32_t base : 20;
+};
+struct pte_t
+{
+    uint32_t present : 1;
+    uint32_t rw : 1;
+    uint32_t user : 1;
+    uint32_t pwt : 1;
+    uint32_t pcd : 1;
+    uint32_t accessed : 1;
+    uint32_t dirty : 1;
+    uint32_t pat : 1;
+    uint32_t global : 1;
+    uint32_t avail : 3;
+    uint32_t base : 20;
+};
 void init_mm(struct multiboot_t *m);
 void add_memseg(uint32_t addr, uint32_t size);
 void *alloc(uint32_t start_addr, uint32_t size);
@@ -37,4 +70,6 @@ void *alloc_4k(uint32_t start_addr, uint32_t size);
 bool free(uint32_t ptr);
 uint32_t get_total_free();
 uint32_t get_total_alloc();
+uint32_t get_cr3();
+void set_vm_attr(uint32_t vm_addr, uint32_t cr3, uint32_t attr);
 #endif

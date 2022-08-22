@@ -360,6 +360,33 @@ uint32_t get_total_alloc()
     }
     return total;
 }
+
+// 返回当前cr3寄存器的值
+uint32_t get_cr3()
+{
+    uint32_t cr3;
+    // 获取cr3
+    asm volatile("movl %%cr3, %0"
+                 : "=r"(cr3));
+    return cr3;
+}
+// 设置虚拟地址vm_addr所在的物理页的属性 (cr3寄存器存的都是物理地址)
+void set_vm_attr(uint32_t vm_addr, uint32_t cr3, uint32_t attr)
+{
+    // pde pte 所在的物理地址必须小于KERNEL_LIMIT
+    ASSERT(0 == (cr3 & 0x3ff));
+    ASSERT(cr3 < KERNEL_LIMIT)
+
+    uint32_t pde_idx = vm_addr >> 22;
+    uint32_t pte_idx = ((vm_addr) >> 12) & 0x3ff;
+    struct pde_t *pde = (struct pde_t *)TOHM(((cr3)));
+    uint32_t pte_ptr = ((pde[pde_idx].base) << 12);
+    ASSERT(pte_ptr < KERNEL_LIMIT);
+    struct pte_t *pte = (struct pte_t *)TOHM(pte_ptr);
+    uint32_t *old_attr_ptr = (((uint32_t *)(&pte[pte_idx])));
+    *old_attr_ptr = (*old_attr_ptr & 0xfffff000) | attr;
+}
+
 #ifdef DEBUG
 void test()
 {
