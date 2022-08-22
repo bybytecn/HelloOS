@@ -63,13 +63,21 @@ struct pte_t
     uint32_t avail : 3;
     uint32_t base : 20;
 };
+
+// 物理内存管理
 void init_mm(struct multiboot_t *m);
 void add_memseg(uint32_t addr, uint32_t size);
-void *alloc(uint32_t start_addr, uint32_t size);
-void *alloc_4k(uint32_t start_addr, uint32_t size);
-bool free(uint32_t ptr);
-uint32_t get_total_free();
-uint32_t get_total_alloc();
-uint32_t get_cr3();
+void *alloc_phy(uint32_t start_addr, uint32_t size);
+void *alloc_phy_4k(uint32_t start_addr, uint32_t size);
+bool free_phy(uint32_t ptr);
+uint32_t get_phy_total_free();
+uint32_t get_phy_total_alloc();
+
+bool alloc_phy_for_vma(uint32_t vm_addr, uint32_t cr3);
 void set_vm_attr(uint32_t vm_addr, uint32_t cr3, uint32_t attr);
+
+uint32_t get_cr3();
+uint32_t create_cr3();
+
+void switch_cr3(uint32_t cr3);
 #endif

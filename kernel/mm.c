@@ -1,9 +1,11 @@
 #include "./include/mm.h"
 #include "./include/console.h"
 #include "./include/debug.h"
+#include "../common/include/strings.h"
 extern uint8_t g_kern_start[];
 extern uint8_t g_kern_end[];
-uint32_t g_seg_cnt = 0;
+uint32_t g_seg_cnt = 0; // 管理的物理段的数量
+uint32_t g_def_cr3 = 0; // 默认内核使用的页目录表
 struct mm_manager_t g_mm_manager;
 void merge();
 void init_mm(struct multiboot_t *m)
@@ -38,6 +40,9 @@ void init_mm(struct multiboot_t *m)
         kprintf("base_addr = %X, length = %X type:%d \n", start, size, mmap->type);
 #endif
     }
+
+    g_def_cr3 = get_cr3();
+    ASSERT(g_def_cr3 < KERNEL_LIMIT)
 }
 
 //  添加用于内存管理的段
@@ -48,8 +53,8 @@ void add_memseg(uint32_t addr, uint32_t size)
     g_seg_cnt++;
 }
 
-// 分配4k对齐的内存，成功返回内存地址，失败返回0
-void *alloc_4k(uint32_t start_addr, uint32_t size)
+// 分配未使用的物理内存空间 分配4k对齐的内存，成功返回内存地址，失败返回0
+void *alloc_phy_4k(uint32_t start_addr, uint32_t size)
 {
     merge();
     if (0 == size)
@@ -183,7 +188,7 @@ void *alloc_4k(uint32_t start_addr, uint32_t size)
 #endif
     return 0;
 }
-void *alloc(uint32_t start_addr, uint32_t size)
+void *alloc_phy(uint32_t start_addr, uint32_t size)
 {
     merge();
     if (0 == size)
@@ -300,7 +305,7 @@ void merge()
         }
     }
 }
-bool free(uint32_t ptr)
+bool free_phy(uint32_t ptr)
 {
     uint32_t addr = (uint32_t)ptr;
     uint32_t size = 0;
@@ -340,7 +345,7 @@ bool free(uint32_t ptr)
     panic("No free memory block");
 }
 // 返回当前可用的内存大小
-uint32_t get_total_free()
+uint32_t get_phy_total_free()
 {
     uint32_t total = 0;
     for (int i = 0; i < MAX_FREE_BLOCK_NUM; i++)
@@ -351,7 +356,7 @@ uint32_t get_total_free()
 }
 
 // 返回当前已分配的内存大小
-uint32_t get_total_alloc()
+uint32_t get_phy_total_alloc()
 {
     uint32_t total = 0;
     for (int i = 0; i < MAX_ALLOC_BLOCK_NUM; i++)
@@ -385,6 +390,80 @@ void set_vm_attr(uint32_t vm_addr, uint32_t cr3, uint32_t attr)
     struct pte_t *pte = (struct pte_t *)TOHM(pte_ptr);
     uint32_t *old_attr_ptr = (((uint32_t *)(&pte[pte_idx])));
     *old_attr_ptr = (*old_attr_ptr & 0xfffff000) | attr;
+}
+
+// 为虚拟地址addr分配对应的物理页
+bool alloc_phy_for_vma(uint32_t vm_addr, uint32_t cr3)
+{
+    ASSERT(0 == (cr3 & 0x3ff));
+    ASSERT(cr3 < KERNEL_LIMIT)
+
+    uint32_t pde_idx = vm_addr >> 22;
+    uint32_t pte_idx = ((vm_addr) >> 12) & 0x3ff;
+    uint32_t page_offset = vm_addr & 0xfff;
+
+    struct pde_t *pde = (struct pde_t *)TOHM(((cr3)));
+    if (0 == pde[pde_idx].present)
+    {
+        pde[pde_idx].present = 1;
+        uint32_t m_pte = (uint32_t)alloc_phy_4k(0, 1024 * 4);
+        if (0 == m_pte)
+        {
+#ifdef DEBUG
+            panic("alloc_phy_for_vma failed");
+#endif
+            return FALSE;
+        }
+        memset((void *)TOHM(m_pte), 0, 1024 * 4);
+        pde[pde_idx].base = m_pte >> 12;
+    }
+
+    uint32_t pte_ptr = ((pde[pde_idx].base) << 12);
+    ASSERT(pte_ptr < KERNEL_LIMIT);
+
+    struct pte_t *pte = (struct pte_t *)TOHM(pte_ptr);
+    if (0 == pte->present)
+    {
+        pte->present = 1;
+        uint32_t m_page = (uint32_t)alloc_phy_4k(0, 1024 * 4);
+        if (0 == m_page)
+        {
+#ifdef DEBUG
+            panic("alloc_phy_for_vma failed");
+#endif
+            return FALSE;
+        }
+        memset((void *)TOHM(m_page), 0, 1024 * 4);
+        pte[pte_idx].base = m_page >> 12;
+    }
+    return TRUE;
+}
+
+// 创建一个页目录表，高1G依然设置为内核空间，成功返回物理地址，失败0
+uint32_t create_cr3()
+{
+    uint32_t cr3 = (uint32_t)alloc_phy_4k(0, 4 * 1024);
+    if (0 == cr3)
+    {
+#ifdef DEBUG
+        panic("create_cr3 failed");
+#endif
+        return 0;
+    }
+    memset((void *)TOHM(cr3), 0, 1024 * 4);
+
+    uint32_t *def_pde = (uint32_t *)TOHM(g_def_cr3);
+    uint32_t *cur_pde = (uint32_t *)TOHM(cr3);
+
+    cur_pde[0x300] = def_pde[0x300];
+    kprintf("%x - %x \n", cur_pde[0x300], def_pde[0x300]);
+    return cr3;
+}
+
+void switch_cr3(uint32_t cr3)
+{
+    // 加载cr3
+    asm volatile("mov %0, %%cr3" ::"r"(cr3));
 }
 
 #ifdef DEBUG
