@@ -126,7 +126,38 @@ void *alloc_4k(uint32_t size)
     panic("alloc_4k failed\n");
 #endif
 }
-
+void *alloc(uint32_t size)
+{
+    merge();
+    if (0 == size)
+    {
+        return 0;
+    }
+    for (int i = 0; i < MAX_FREE_BLOCK_NUM; i++)
+    {
+        if (g_mm_manager.free_area[i].size >= size)
+        {
+            uint32_t addr = g_mm_manager.free_area[i].start;
+            g_mm_manager.free_area[i].start += size;
+            g_mm_manager.free_area[i].size -= size;
+            for (int j = 0; j < MAX_ALLOC_BLOCK_NUM; j++)
+            {
+                if (g_mm_manager.alloc_area[j].size == 0)
+                {
+                    g_mm_manager.alloc_area[j].start = addr;
+                    g_mm_manager.alloc_area[j].size = size;
+                    break;
+                }
+            }
+            return (void *)addr;
+        }
+    }
+#ifdef DEBUG
+    panic("alloc failed\n");
+#endif
+    //没有足够的内存分配了
+    return 0;
+}
 // 合并分散的碎片块
 void merge()
 {
