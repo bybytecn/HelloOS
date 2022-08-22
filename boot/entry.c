@@ -6,7 +6,7 @@ int entry(struct multiboot_t *mtb)
 {
     init_debug(mtb);
     init_mm(mtb);
-    kprintf("HelloOS!");
+    kprintf("HelloOS!!!");
     while (1)
     {
         asm volatile("hlt");

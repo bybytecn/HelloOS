@@ -48,19 +48,19 @@ void print_stack_trace()
 }
 void init_debug(struct multiboot_t *mtb)
 {
-    elf_section_header_t *sec = (elf_section_header_t *)mtb->addr;
+    elf_section_header_t *sec = (elf_section_header_t *)(mtb->addr + 0xc0000000);
     int nametable = sec[mtb->shndx].addr;
     for (int i = 0; i < mtb->num; i++)
     {
-        char *name = (char *)(sec[i].name + (uint32_t)nametable);
+        char *name = (char *)(sec[i].name + ((uint32_t)nametable) + 0xc0000000);
         if (strcmp(name, ".symtab") == 0)
         {
-            g_debug_elf_tab.symtab = (struct elf_symbol_t *)sec[i].addr;
+            g_debug_elf_tab.symtab = (struct elf_symbol_t *)(sec[i].addr + 0xc0000000);
             g_debug_elf_tab.symtabsz = sec[i].size;
         }
         else if (strcmp(name, ".strtab") == 0)
         {
-            g_debug_elf_tab.strtab = (const char *)sec[i].addr;
+            g_debug_elf_tab.strtab = (const char *)(sec[i].addr + 0xc0000000);
             g_debug_elf_tab.strtabsz = sec[i].size;
         }
     }

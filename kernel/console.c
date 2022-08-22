@@ -1,7 +1,7 @@
 #include "./include/console.h"
 #include "./include/ioutil.h"
 // VGA 的显示缓冲的起点是 0xB8000
-uint16_t *video_memory = (uint16_t *)0xB8000;
+uint32_t *video_memory = (uint32_t *)(0xB8000 + 0xC0000000);
 
 // 屏幕"光标"的坐标
 uint8_t cursor_x = 0;
@@ -39,13 +39,13 @@ void scroll()
 		int i;
 		for (i = 0 * 80; i < 24 * 80; i++)
 		{
-			video_memory[i] = video_memory[i + 80];
+			((uint16_t *)video_memory)[i] = ((uint16_t *)video_memory)[i + 80];
 		}
 
 		// 最后的一行数据现在填充空格，不显示任何字符
 		for (i = 24 * 80; i < 25 * 80; i++)
 		{
-			video_memory[i] = blank;
+			((uint16_t *)video_memory)[i] = blank;
 		}
 
 		// 向上移动了一行，所以 cursor_y 现在是 24
@@ -62,7 +62,7 @@ void console_clear()
 	int i;
 	for (i = 0; i < 80 * 25; i++)
 	{
-		video_memory[i] = blank;
+		((uint16_t *)video_memory)[i] = blank;
 	}
 
 	cursor_x = 0;
@@ -100,7 +100,7 @@ void console_putc_color(char c, real_color_t back, real_color_t fore)
 	}
 	else if (c >= ' ')
 	{
-		video_memory[cursor_y * 80 + cursor_x] = c | attribute;
+		((uint16_t *)video_memory)[cursor_y * 80 + cursor_x] = c | attribute;
 		cursor_x++;
 	}
 
