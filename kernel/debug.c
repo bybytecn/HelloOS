@@ -42,6 +42,10 @@ void print_stack_trace()
     while (ebp)
     {
         eip = ebp + 1;
+        if (*eip == 0)
+        {
+            break;
+        }
         kprintf("   [%x] %s\n", *eip, lookup_sym(*eip));
         ebp = (uint32_t *)*ebp;
     }
@@ -49,7 +53,7 @@ void print_stack_trace()
 void init_debug(struct multiboot_t *mtb)
 {
     elf_section_header_t *sec = (elf_section_header_t *)(mtb->addr + 0xc0000000);
-    int nametable = sec[mtb->shndx].addr;
+    uint32_t nametable = sec[mtb->shndx].addr;
     for (int i = 0; i < mtb->num; i++)
     {
         char *name = (char *)(sec[i].name + ((uint32_t)nametable) + 0xc0000000);
@@ -67,9 +71,13 @@ void init_debug(struct multiboot_t *mtb)
 }
 const char *lookup_sym(uint32_t addr)
 {
+    if (0 == addr)
+    {
+        return "NULL";
+    }
     for (int i = 0; i < g_debug_elf_tab.symtabsz / (sizeof(struct elf_symbol_t)); i++)
     {
-        if (addr >= g_debug_elf_tab.symtab[i].value && addr < g_debug_elf_tab.symtab[i].value + g_debug_elf_tab.symtab[i].size)
+        if (addr >= (g_debug_elf_tab.symtab[i].value) && addr < (g_debug_elf_tab.symtab[i].value + g_debug_elf_tab.symtab[i].size))
         {
             return (char *)(g_debug_elf_tab.strtab + g_debug_elf_tab.symtab[i].name);
         }

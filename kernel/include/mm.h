@@ -32,6 +32,9 @@ struct mm_manager_t
 };
 void init_mm(struct multiboot_t *m);
 void add_memseg(uint32_t addr, uint32_t size);
-void *alloc_4k(uint32_t size);
-void *alloc(uint32_t size);
+void *alloc(uint32_t start_addr, uint32_t size);
+void *alloc_4k(uint32_t start_addr, uint32_t size);
+bool free(uint32_t ptr);
+uint32_t get_total_free();
+uint32_t get_total_alloc();
 #endif
