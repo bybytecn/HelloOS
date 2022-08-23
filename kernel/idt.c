@@ -1,5 +1,6 @@
 #include "./include/idt.h"
 #include "../boot/include/gdt.h"
+#include "./include/console.h"
 extern int g_idt_table;
 struct interupt_descriptor g_idt_desc;
 void init_idt()
@@ -22,4 +23,5 @@ void init_idt()
 // 特权级没发生变化时用的处理函数
 void idt_r0_handler(int esp, int ebp, int edi, int esi, int edx, int ecx, int ebx, int eax, int vecNum, int errCode, int eip, int cs, int eflags)
 {
+    kprintf("vecNum:%d\n", vecNum);
 }
