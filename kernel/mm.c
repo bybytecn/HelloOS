@@ -60,7 +60,7 @@ void *alloc_phy_4k(uint32_t start_addr, uint32_t size)
     if (0 == size)
     {
 #ifdef DEBUG
-        panic("alloc_4k failed(size=0)\n");
+        kprintf("alloc_4k failed(size=0)\n");
 #endif
         return 0;
     }
@@ -102,7 +102,7 @@ void *alloc_phy_4k(uint32_t start_addr, uint32_t size)
             }
             if (no_space)
             {
-                panic("alloc_4k failed(no space)\n");
+                PANIC("alloc_4k failed(no space)");
             }
             //剩下的内存
             uint32_t free_size = alloc_addr - range_start;
@@ -121,7 +121,7 @@ void *alloc_phy_4k(uint32_t start_addr, uint32_t size)
             }
             if (no_space2)
             {
-                panic("alloc_4k failed(no space2)\n");
+                PANIC("alloc_4k failed(no space2)");
             }
             return (void *)alloc_addr;
         }
@@ -163,7 +163,7 @@ void *alloc_phy_4k(uint32_t start_addr, uint32_t size)
             }
             if (not_found)
             {
-                panic("alloc_4k failed\n");
+                PANIC("alloc_4k failed");
             }
             not_found = TRUE;
             for (int j = 0; j < MAX_FREE_BLOCK_NUM; j++)
@@ -178,7 +178,7 @@ void *alloc_phy_4k(uint32_t start_addr, uint32_t size)
             }
             if (not_found)
             {
-                panic("alloc_4k failed\n");
+                PANIC("alloc_4k failed");
             }
             return (void *)alloc_addr;
         }
@@ -235,7 +235,7 @@ void *alloc_phy(uint32_t start_addr, uint32_t size)
             }
             if (no_space || no_space2)
             {
-                panic("alloc failed\n");
+                PANIC("alloc failed");
             }
             return (void *)start_addr;
         }
@@ -257,7 +257,7 @@ void *alloc_phy(uint32_t start_addr, uint32_t size)
             }
             if (no_space)
             {
-                panic("alloc failed\n");
+                PANIC("alloc failed");
             }
             return (void *)range_start;
         }
@@ -342,7 +342,7 @@ bool free_phy(uint32_t ptr)
             return TRUE;
         }
     }
-    panic("No free memory block");
+    PANIC("No free memory block\n");
 }
 // 返回当前可用的内存大小
 uint32_t get_phy_total_free()
@@ -401,20 +401,20 @@ bool alloc_phy_for_vma(uint32_t vm_addr, uint32_t cr3)
     uint32_t pde_idx = vm_addr >> 22;
     uint32_t pte_idx = ((vm_addr) >> 12) & 0x3ff;
     uint32_t page_offset = vm_addr & 0xfff;
-
+    ASSERT(pde_idx < 0x300)
     struct pde_t *pde = (struct pde_t *)TOHM(((cr3)));
     if (0 == pde[pde_idx].present)
     {
-        pde[pde_idx].present = 1;
         uint32_t m_pte = (uint32_t)alloc_phy_4k(0, 1024 * 4);
         if (0 == m_pte)
         {
 #ifdef DEBUG
-            panic("alloc_phy_for_vma failed");
+            kprintf("alloc_phy_for_vma failed");
 #endif
             return FALSE;
         }
         memset((void *)TOHM(m_pte), 0, 1024 * 4);
+        pde[pde_idx].present = 1;
         pde[pde_idx].base = m_pte >> 12;
     }
 
@@ -422,18 +422,18 @@ bool alloc_phy_for_vma(uint32_t vm_addr, uint32_t cr3)
     ASSERT(pte_ptr < KERNEL_LIMIT);
 
     struct pte_t *pte = (struct pte_t *)TOHM(pte_ptr);
-    if (0 == pte->present)
+    if (0 == pte[pte_idx].present)
     {
-        pte->present = 1;
         uint32_t m_page = (uint32_t)alloc_phy_4k(0, 1024 * 4);
         if (0 == m_page)
         {
 #ifdef DEBUG
-            panic("alloc_phy_for_vma failed");
+            kprintf("alloc_phy_for_vma failed");
 #endif
             return FALSE;
         }
         memset((void *)TOHM(m_page), 0, 1024 * 4);
+        pte[pte_idx].present = 1;
         pte[pte_idx].base = m_page >> 12;
     }
     return TRUE;
@@ -446,7 +446,7 @@ uint32_t create_cr3()
     if (0 == cr3)
     {
 #ifdef DEBUG
-        panic("create_cr3 failed");
+        kprintf("create_cr3 failed\n");
 #endif
         return 0;
     }
@@ -497,37 +497,73 @@ uint32_t clean_cr3(uint32_t cr3)
 }
 
 #ifdef DEBUG
-void test()
+void test_mm()
 {
-    for (int i = 0; i < 1024; i++)
     {
-        uint32_t pre_a, pre_b;
-        pre_a = get_phy_total_free();
-        pre_b = get_phy_total_alloc();
+        uint32_t *ptr = (uint32_t *)alloc_phy(0, 4);
+        ptr = (uint32_t *)(TOHM((uint32_t)(ptr)));
+        *ptr = 1;
+        set_vm_attr(((uint32_t)ptr), get_cr3(), PAGE_USER_ACCESS | PAGE_WRITE);
 
-        uint32_t t = (uint32_t)alloc_phy(0, 1 + i * 3);
-
-        free_phy(t);
-
-        t = (uint32_t)alloc_phy_4k(0, 1 + i * 3);
-        ASSERT((t & 0x3ff) == 0)
-        free_phy(t);
-
-        t = (uint32_t)alloc_phy(i * 0x10000, 1 + i * 3);
-        ASSERT(t >= (i * 0x10000));
-        free_phy(t);
-
-        t = (uint32_t)alloc_phy_4k(i * 0x10000, 1 + i * 3);
-        ASSERT(t >= (i * 0x10000));
-        ASSERT((t & 0x3ff) == 0)
-        free_phy(t);
-
-        uint32_t aft_a, afte_b;
-        aft_a = get_phy_total_free();
-        afte_b = get_phy_total_alloc();
-        ASSERT(pre_a == aft_a);
-        ASSERT(pre_b == afte_b);
+        bool vma = alloc_phy_for_vma(0x3f000000, get_cr3());
+        uint32_t *x = (uint32_t *)0x3f000000;
+        *x = 111;
+        kprintf("%x %x!!!\n", ptr, *x);
     }
+    // for (int i = 0; i < 0; i++)
+    // {
+    //     uint32_t pre_a, pre_b;
+    //     pre_a = get_phy_total_free();
+    //     pre_b = get_phy_total_alloc();
+
+    //     uint32_t t = (uint32_t)alloc_phy(0, 1 + i * 3);
+
+    //     free_phy(t);
+
+    //     t = (uint32_t)alloc_phy_4k(0, 1 + i * 3);
+    //     ASSERT((t & 0x3ff) == 0)
+    //     free_phy(t);
+
+    //     t = (uint32_t)alloc_phy(i * 0x10000, 1 + i * 3);
+    //     ASSERT(t >= (i * 0x10000));
+    //     free_phy(t);
+
+    //     t = (uint32_t)alloc_phy_4k(i * 0x10000, 1 + i * 3);
+    //     ASSERT(t >= (i * 0x10000));
+    //     ASSERT((t & 0x3ff) == 0)
+    //     free_phy(t);
+
+    //     uint32_t aft_a, afte_b;
+    //     aft_a = get_phy_total_free();
+    //     afte_b = get_phy_total_alloc();
+    //     ASSERT(pre_a == aft_a);
+    //     ASSERT(pre_b == afte_b);
+    // }
+    // {
+    //     uint32_t pre_a, pre_b;
+    //     pre_a = get_phy_total_free();
+    //     pre_b = get_phy_total_alloc();
+
+    //     int ptrs[1024];
+    //     for (int i = 0; i < 1024; i++)
+    //     {
+    //         if (i == 1023)
+    //         {
+    //             kprintf("1");
+    //         }
+    //         ptrs[i] = alloc_phy(i, 1 + i * 3);
+    //     }
+    //     for (int i = 1024 - 1; i >= 0; i--)
+    //     {
+    //         kprintf("%d %d", i, ptrs[i]);
+    //         free_phy(ptrs[i]);
+    //     }
+    //     uint32_t aft_a, afte_b;
+    //     aft_a = get_phy_total_free();
+    //     afte_b = get_phy_total_alloc();
+    //     ASSERT(pre_a == aft_a);
+    //     ASSERT(pre_b == afte_b);
+    // }
     {
         uint32_t a = get_phy_total_free();
         uint32_t b = get_phy_total_alloc();
@@ -536,6 +572,19 @@ void test()
         alloc_phy_for_vma(0x3f000000, cr3);
         alloc_phy_for_vma(0xf000000, cr3);
         alloc_phy_for_vma(0x5f000000, cr3);
+
+        alloc_phy_for_vma(0x3f000000, cr3);
+        alloc_phy_for_vma(0xf000000, cr3);
+        alloc_phy_for_vma(0x5f000000, cr3);
+
+        alloc_phy_for_vma(0x4f000000, cr3);
+
+        alloc_phy_for_vma(0x5f00, cr3);
+        alloc_phy_for_vma(0xaf000000, cr3);
+        for (int i = 0; i < 80; i++)
+        {
+            alloc_phy_for_vma(0x1000000 + i * 0x111f1a, cr3);
+        }
         kprintf("%x - %x \n", get_phy_total_free(), get_phy_total_alloc());
         clean_cr3(cr3);
         uint32_t aa = get_phy_total_free();

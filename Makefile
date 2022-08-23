@@ -1,7 +1,7 @@
 p=RELEASE
 all:
 	nasm -f elf -g -F stabs  boot/boot.s -o bin/boot.o
-	cd bin && gcc -c -D ${p} -m32 -g -ggdb -fcf-protection=none -mmanual-endbr -no-pie -fno-pic -nostdinc -fno-builtin -fno-stack-protector ../boot/*.c ../kernel/*.c ../common/*.c
+	cd bin && gcc -O0 -c -D ${p} -m32 -g -ggdb -fcf-protection=none -mmanual-endbr -no-pie -fno-pic -nostdinc -fno-builtin -fno-stack-protector ../boot/*.c ../kernel/*.c ../common/*.c
 	ld -T kernel.ld -m elf_i386 -nostdlib bin/*.o -o bin/kernel
 	mkdir /g
 	losetup -P /dev/loop18  hd

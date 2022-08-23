@@ -53,7 +53,7 @@ next:
     push 0
     jmp eax
 section .init_text
-    times 1024 db 0      ; 进入entry后使用的栈空间
+    times 8024 db 0      ; 进入entry后使用的栈空间
     stack:
 section .init_data
     ptr_mtb dd 0
