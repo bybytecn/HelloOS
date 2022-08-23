@@ -720,9 +720,64 @@ void free_phy_for_vma_range(uint32_t vm_addr, uint32_t size, uint32_t cr3)
     }
 }
 
+// 返回分配的虚拟内存大小
+uint32_t get_vm_total_alloc(uint32_t cr3)
+{
+    ASSERT(0 == (cr3 & 0x3ff));
+    ASSERT(cr3 < KERNEL_LIMIT);
+    switch_cr3(cr3);
+    uint32_t ret = 0;
+    for (int i = 0; i < VM_START_ADDR; i++)
+    {
+        uint8_t *p = (uint8_t *)(i);
+        if (*p == 0xff)
+        {
+            ret += VM_BITMAP_PAGE_SIZE * 8;
+        }
+        else
+        {
+            for (int j = 0; j < 8; j++)
+            {
+                if (((*p) & (1 << j)) == 1)
+                {
+                    ret += VM_BITMAP_PAGE_SIZE;
+                }
+            }
+        }
+    }
+    switch_cr3(g_def_cr3);
+    return ret;
+}
 #ifdef DEBUG
 void test_mm()
 {
+    {
+        // uint32_t aa = get_phy_total_free();
+        // uint32_t bb = get_phy_total_alloc();
+
+        // uint32_t cr3 = create_cr3();
+        // init_vm(cr3);
+        // uint32_t a = get_vm_total_alloc(cr3);
+
+        // uint32_t *p = alloc_vm(cr3, 30500);
+        // uint32_t b = get_vm_total_alloc(cr3);
+        // uint32_t *p2 = alloc_vm(cr3, 70591);
+        // b = get_vm_total_alloc(cr3);
+        // uint32_t *p3 = alloc_vm(cr3, 8105);
+        // b = get_vm_total_alloc(cr3);
+        // free_vm((uint32_t)p3, cr3);
+        // free_vm((uint32_t)p, cr3);
+        // free_vm((uint32_t)p2, cr3);
+
+        // b = get_vm_total_alloc(cr3);
+        // ASSERT(a == b)
+
+        // clean_cr3(cr3);
+        // uint32_t aaa = get_phy_total_free();
+        // uint32_t bbb = get_phy_total_alloc();
+        // ASSERT(aaa == aa);
+        // ASSERT(bbb == bb);
+    }
     // {
     //     uint32_t cr3 = create_cr3();
     //     init_vm(cr3);

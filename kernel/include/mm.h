@@ -95,6 +95,8 @@ void init_vm(uint32_t cr3);
 void *alloc_vm(uint32_t cr3, uint32_t size);
 bool free_vm(uint32_t vm_addr, uint32_t cr3);
 
+uint32_t get_vm_total_alloc(uint32_t cr3);
+
 uint32_t get_cr3();
 uint32_t create_cr3();
 uint32_t clean_cr3(uint32_t cr3);
