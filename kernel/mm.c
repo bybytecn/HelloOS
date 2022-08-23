@@ -86,7 +86,7 @@ void *alloc_phy_4k(uint32_t start_addr, uint32_t size)
             }
             if (not_found)
             {
-                panic("alloc_4k failed\n");
+                continue;
             }
             bool no_space = TRUE, no_space2 = TRUE;
             //记录下这块分配的内存块
@@ -142,7 +142,7 @@ void *alloc_phy_4k(uint32_t start_addr, uint32_t size)
             }
             if (not_found)
             {
-                panic("alloc_4k failed\n");
+                continue;
             }
 
             //剩下的内存
@@ -456,7 +456,6 @@ uint32_t create_cr3()
     uint32_t *cur_pde = (uint32_t *)TOHM(cr3);
 
     cur_pde[0x300] = def_pde[0x300];
-    kprintf("%x - %x \n", cur_pde[0x300], def_pde[0x300]);
     return cr3;
 }
 
@@ -466,37 +465,84 @@ void switch_cr3(uint32_t cr3)
     asm volatile("mov %0, %%cr3" ::"r"(cr3));
 }
 
+// 清除占用的物理页 返回释放的物理内存字节数
+uint32_t clean_cr3(uint32_t cr3)
+{
+    uint32_t total = 0;
+    ASSERT(0 == (cr3 & 0x3ff));
+    ASSERT(cr3 < KERNEL_LIMIT)
+
+    uint32_t *pde = (uint32_t *)TOHM(cr3);
+    for (int i = 0; i < 0x300; i++)
+    {
+        if (pde[i] & 0x1)
+        {
+            uint32_t *pte = (uint32_t *)TOHM((pde[i] & 0xfffff000));
+            for (int j = 0; j < 1024; j++)
+            {
+                if (pte[j] & 0x1)
+                {
+                    total += 0x1000;
+                    ASSERT(free_phy((uint32_t)(pte[j] & 0xfffff000)))
+                }
+            }
+            total += 0x1000;
+            ASSERT(free_phy((uint32_t)(pde[i] & 0xfffff000)))
+        }
+    }
+    total += 0x1000;
+    ASSERT(free_phy((uint32_t)(cr3)))
+
+    return total;
+}
+
 #ifdef DEBUG
 void test()
 {
     for (int i = 0; i < 1024; i++)
     {
         uint32_t pre_a, pre_b;
-        pre_a = get_total_free();
-        pre_b = get_total_alloc();
+        pre_a = get_phy_total_free();
+        pre_b = get_phy_total_alloc();
 
-        uint32_t t = (uint32_t)alloc(0, 1 + i * 3);
+        uint32_t t = (uint32_t)alloc_phy(0, 1 + i * 3);
 
-        free(t);
+        free_phy(t);
 
-        t = (uint32_t)alloc_4k(0, 1 + i * 3);
+        t = (uint32_t)alloc_phy_4k(0, 1 + i * 3);
         ASSERT((t & 0x3ff) == 0)
-        free(t);
+        free_phy(t);
 
-        t = (uint32_t)alloc(i * 0x10000, 1 + i * 3);
+        t = (uint32_t)alloc_phy(i * 0x10000, 1 + i * 3);
         ASSERT(t >= (i * 0x10000));
-        free(t);
+        free_phy(t);
 
-        t = (uint32_t)alloc_4k(i * 0x10000, 1 + i * 3);
+        t = (uint32_t)alloc_phy_4k(i * 0x10000, 1 + i * 3);
         ASSERT(t >= (i * 0x10000));
         ASSERT((t & 0x3ff) == 0)
-        free(t);
+        free_phy(t);
 
         uint32_t aft_a, afte_b;
-        aft_a = get_total_free();
-        afte_b = get_total_alloc();
+        aft_a = get_phy_total_free();
+        afte_b = get_phy_total_alloc();
         ASSERT(pre_a == aft_a);
         ASSERT(pre_b == afte_b);
+    }
+    {
+        uint32_t a = get_phy_total_free();
+        uint32_t b = get_phy_total_alloc();
+        kprintf("%x - %x \n", get_phy_total_free(), get_phy_total_alloc());
+        uint32_t cr3 = create_cr3();
+        alloc_phy_for_vma(0x3f000000, cr3);
+        alloc_phy_for_vma(0xf000000, cr3);
+        alloc_phy_for_vma(0x5f000000, cr3);
+        kprintf("%x - %x \n", get_phy_total_free(), get_phy_total_alloc());
+        clean_cr3(cr3);
+        uint32_t aa = get_phy_total_free();
+        uint32_t bb = get_phy_total_alloc();
+        kprintf("%x - %x \n", get_phy_total_free(), get_phy_total_alloc());
+        ASSERT(aa == a);
+        ASSERT(bb == b);
     }
 }
 #endif

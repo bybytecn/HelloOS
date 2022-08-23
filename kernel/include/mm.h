@@ -78,6 +78,7 @@ void set_vm_attr(uint32_t vm_addr, uint32_t cr3, uint32_t attr);
 
 uint32_t get_cr3();
 uint32_t create_cr3();
+uint32_t clean_cr3(uint32_t cr3);
 
 void switch_cr3(uint32_t cr3);
 #endif
