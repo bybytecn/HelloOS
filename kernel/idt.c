@@ -21,7 +21,7 @@ void init_idt()
                  : "m"(g_idt_desc));
 }
 // 特权级没发生变化时用的处理函数
-void idt_r0_handler(int esp, int ebp, int edi, int esi, int edx, int ecx, int ebx, int eax, int vecNum, int errCode, int eip, int cs, int eflags)
+void idt_r0_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint32_t edx, uint32_t ecx, uint32_t ebx, uint32_t eax, uint32_t vecNum, uint32_t errCode, uint32_t eip, uint32_t cs, uint32_t eflags)
 {
-    kprintf("vecNum:%d\n", vecNum);
+    // kprintf("vecNum:%d, errCode:%d, eip:%x, cs:%x, eflags:%x \n", vecNum, errCode, eip, cs, eflags);
 }
