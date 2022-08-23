@@ -64,7 +64,7 @@ void *alloc_phy_4k(uint32_t start_addr, uint32_t size)
 #endif
         return 0;
     }
-    for (int i = 0; i < MAX_FREE_BLOCK_NUM; i++)
+    for (int i = MAX_FREE_BLOCK_NUM - 1; i > 0; i--)
     {
         uint32_t range_start = g_mm_manager.free_area[i].start;
         uint32_t range_end = g_mm_manager.free_area[i].start + g_mm_manager.free_area[i].size; //闭区间
@@ -198,7 +198,7 @@ void *alloc_phy(uint32_t start_addr, uint32_t size)
 #endif
         return 0;
     }
-    for (int i = 0; i < MAX_FREE_BLOCK_NUM; i++)
+    for (int i = MAX_FREE_BLOCK_NUM - 1; i > 0; i--)
     {
         uint32_t range_start = g_mm_manager.free_area[i].start;
         uint32_t range_end = g_mm_manager.free_area[i].start + g_mm_manager.free_area[i].size; //闭区间
@@ -439,6 +439,40 @@ bool alloc_phy_for_vma(uint32_t vm_addr, uint32_t cr3)
     return TRUE;
 }
 
+// 释放虚拟地址addr对应的物理页
+bool free_phy_for_vma(uint32_t vm_addr, uint32_t cr3)
+{
+    ASSERT(0 == (cr3 & 0x3ff));
+    ASSERT(cr3 < KERNEL_LIMIT)
+
+    uint32_t pde_idx = vm_addr >> 22;
+    uint32_t pte_idx = ((vm_addr) >> 12) & 0x3ff;
+    uint32_t page_offset = vm_addr & 0xfff;
+    ASSERT(pde_idx < 0x300)
+    struct pde_t *pde = (struct pde_t *)TOHM(((cr3)));
+    if (0 == pde[pde_idx].present)
+    {
+#ifdef DEBUG
+        kprintf("free_phy_for_vma failed");
+#endif
+        return FALSE;
+    }
+    uint32_t pte_ptr = ((pde[pde_idx].base) << 12);
+    ASSERT(pte_ptr < KERNEL_LIMIT);
+
+    struct pte_t *pte = (struct pte_t *)TOHM(pte_ptr);
+    if (0 == pte[pte_idx].present)
+    {
+#ifdef DEBUG
+        kprintf("free_phy_for_vma failed");
+#endif
+        return FALSE;
+    }
+    pte[pte_idx].present = 0;
+    uint32_t page_ptr = ((pte[pte_idx].base) << 12);
+    return free_phy(page_ptr);
+}
+
 // 创建一个页目录表，高1G依然设置为内核空间，成功返回物理地址，失败0
 uint32_t create_cr3()
 {
@@ -496,74 +530,303 @@ uint32_t clean_cr3(uint32_t cr3)
     return total;
 }
 
+// 初始化虚拟内存Bitmap
+void init_vm(uint32_t cr3)
+{
+    ASSERT((0 != VM_START_ADDR) && (0 == (VM_START_ADDR & 0x3ff)))
+    uint32_t cnt = VM_START_ADDR / 0x1000;
+    uint32_t s = 0;
+    for (int i = 0; i < cnt; i++)
+    {
+        ASSERT(alloc_phy_for_vma(s, cr3))
+        s += 0x1000;
+    }
+    // 虚拟内存[0,VM_START_ADDR)是bitmap用来管理虚拟内存的
+    switch_cr3(cr3);
+    memset((void *)0, 0, VM_START_ADDR);
+    switch_cr3(g_def_cr3);
+}
+
+//
+void reverse_bitmap(uint32_t start_group_idx, uint32_t start_bit_idx, uint32_t end_group_idx, uint32_t end_bit_idx)
+{
+    ASSERT(start_group_idx <= end_group_idx)
+    ASSERT(start_bit_idx < 8)
+    ASSERT(end_bit_idx < 8)
+
+    if (start_group_idx == end_group_idx)
+    {
+        uint8_t *p = (uint8_t *)(start_group_idx);
+
+        for (int i = start_bit_idx; i <= end_bit_idx; i++)
+        {
+            *p ^= (1 << i);
+        }
+        return;
+    }
+    for (int k = start_group_idx; k <= end_group_idx; k++)
+    {
+        // 用的虚拟内存访问
+        uint8_t *p = (uint8_t *)(k);
+        if (k < end_group_idx)
+        {
+            *p ^= (0xff << start_bit_idx);
+            continue;
+        }
+        else
+        {
+            for (int i = 0; i <= end_bit_idx; i++)
+            {
+                *p ^= (1 << i);
+            }
+        }
+    }
+    return;
+}
+
+// 分配虚拟内存，分配实际的物理页 返回4k对齐的虚拟地址
+void *alloc_vm(uint32_t cr3, uint32_t size)
+{
+    ASSERT(0 == (cr3 & 0x3ff));
+    ASSERT(cr3 < KERNEL_LIMIT);
+
+    // 计算实际需要的内存大小和页数
+    uint32_t need_size = size + sizeof(struct vm_controll_t);
+    uint32_t need_page_cnt = need_size / (VM_BITMAP_PAGE_SIZE);
+    // 页数不够，需要多分配一页
+    if (0 != (need_size % (VM_BITMAP_PAGE_SIZE)))
+    {
+        need_page_cnt++;
+    }
+    // 记录连续的0的个数
+    uint32_t continue_free_bit_cnt = 0;
+    int32_t start_bit_offset = -1;
+    switch_cr3(cr3);
+
+    // [0,VM_START_ADDR)虚拟内存空间是bitmap用来管理虚拟内存的
+    for (int i = 0; i < VM_START_ADDR; i++)
+    {
+        uint8_t *p = (uint8_t *)i;
+        if ((*p) != 0xff)
+        {
+            for (int j = 0; j < 8; j++)
+            {
+                if (((*p) & (1 << j)) == 0)
+                {
+                    if (start_bit_offset == -1)
+                    {
+                        start_bit_offset = i * 8 + j;
+                        continue_free_bit_cnt = 1;
+                    }
+                    else
+                    {
+                        continue_free_bit_cnt++;
+                    }
+                    // 找到了足够的连续空闲页
+                    if (continue_free_bit_cnt == need_page_cnt)
+                    {
+                        uint32_t start_group_idx = start_bit_offset / 8;
+                        uint32_t start_bit_idx = start_bit_offset % 8;
+
+                        uint32_t end_group_idx = i;
+                        uint32_t end_bit_idx = j;
+
+                        // 标记这段内存为已使用
+                        reverse_bitmap(start_group_idx, start_bit_idx, end_group_idx, end_bit_idx);
+
+                        //
+                        uint32_t target_addr = VM_START_ADDR + start_bit_offset * VM_BITMAP_PAGE_SIZE;
+
+                        // 写入控制块
+                        struct vm_controll_t *vmc = (struct vm_controll_t *)target_addr;
+
+                        // 分配实际的物理页
+                        alloc_phy_for_vma_range((uint32_t)vmc, need_size, cr3);
+
+                        vmc->size = need_size;
+                        vmc->start_addr = ((uint32_t)vmc) + sizeof(struct vm_controll_t);
+                        vmc->start_bit_offset = start_bit_offset;
+                        vmc->end_bit_offset = end_group_idx * 8 + end_bit_idx;
+                        ASSERT((((uint32_t)vmc) & 0x3ff) == 0);
+
+                        uint32_t ret = vmc->start_addr;
+                        // 切换回默认内核的页表
+                        switch_cr3(g_def_cr3);
+                        return (void *)ret;
+                    }
+                }
+                else
+                {
+                    start_bit_offset = -1;
+                    continue_free_bit_cnt = 0;
+                }
+            }
+        }
+    }
+    switch_cr3(g_def_cr3);
+#ifdef DEBUG
+    kprintf("alloc_vm failed");
+#endif
+    return 0;
+}
+// 释放虚拟内存
+bool free_vm(uint32_t vm_addr, uint32_t cr3)
+{
+    ASSERT(0 == (cr3 & 0x3ff));
+    ASSERT(cr3 < KERNEL_LIMIT);
+    switch_cr3(cr3);
+    struct vm_controll_t *vmc = (struct vm_controll_t *)(vm_addr - sizeof(struct vm_controll_t));
+    ASSERT(0 == (((uint32_t)vmc) & 0x3ff));
+    uint32_t start_group_idx = vmc->start_bit_offset / 8;
+    uint32_t start_bit_idx = vmc->start_bit_offset % 8;
+    uint32_t end_group_idx = vmc->end_bit_offset / 8;
+    uint32_t end_bit_idx = vmc->end_bit_offset % 8;
+
+    // 标记为未使用
+    reverse_bitmap(start_group_idx, start_bit_idx, end_group_idx, end_bit_idx);
+
+    // 释放占用的物理页
+    free_phy_for_vma_range((uint32_t)vmc, vmc->size, cr3);
+    switch_cr3(g_def_cr3);
+}
+// 为一片虚拟内存分配实际的物理页
+void alloc_phy_for_vma_range(uint32_t vm_addr, uint32_t size, uint32_t cr3)
+{
+    // 所在的起始页
+    uint32_t start = vm_addr & 0xfffff000;
+    uint32_t end = (vm_addr + size - 1) & 0xfffff000;
+
+    for (uint32_t i = start; i <= end; i += 0x1000)
+    {
+        ASSERT((((uint32_t)i) & 0xfff) == 0);
+        ASSERT(alloc_phy_for_vma(i, cr3))
+    }
+}
+// 释放掉这片虚拟内存占用的物理页
+void free_phy_for_vma_range(uint32_t vm_addr, uint32_t size, uint32_t cr3)
+{
+    ASSERT(0 == (cr3 & 0x3ff));
+    ASSERT(cr3 < KERNEL_LIMIT);
+    ASSERT((((uint32_t)vm_addr) & 0xfff) == 0);
+
+    // 所在的起始页
+    uint32_t start = vm_addr & 0xfffff000;
+    uint32_t end = (vm_addr + size - 1) & 0xfffff000;
+
+    for (uint32_t i = start; i <= end; i += 0x1000)
+    {
+        ASSERT((((uint32_t)i) & 0xfff) == 0);
+        free_phy_for_vma(i, cr3);
+    }
+}
+
 #ifdef DEBUG
 void test_mm()
 {
+    // {
+    //     uint32_t cr3 = create_cr3();
+    //     init_vm(cr3);
+    //     uint32_t a = get_phy_total_free();
+    //     uint32_t b = get_phy_total_alloc();
+
+    //     uint32_t *p = alloc_vm(cr3, 105);
+    //     uint32_t *p2 = alloc_vm(cr3, 105);
+    //     uint32_t *p3 = alloc_vm(cr3, 105);
+    //     free_vm((uint32_t)p3, cr3);
+    //     free_vm((uint32_t)p, cr3);
+    //     free_vm((uint32_t)p2, cr3);
+    //     const int test_cnt = 10;
+    //     int ptrs[test_cnt];
+    //     for (int i = 0; i < test_cnt; i++)
+    //     {
+    //         ptrs[i] = alloc_vm(cr3, (i + 1) * 0x1000);
+    //     }
+    //     for (int i = 0; i < test_cnt; i++)
+    //     {
+    //         free_vm(ptrs[i], cr3);
+    //     }
+
+    //     uint32_t aa = get_phy_total_free();
+    //     uint32_t bb = get_phy_total_alloc();
+    //     ASSERT(aa == a);
+    //     ASSERT(bb == b);
+    // }
+    // {
+    //     uint32_t a = get_phy_total_free();
+    //     uint32_t b = get_phy_total_alloc();
+    //     uint32_t cr3 = create_cr3();
+    //     init_vm(cr3);
+    //     clean_cr3(cr3);
+    //     uint32_t aa = get_phy_total_free();
+    //     uint32_t bb = get_phy_total_alloc();
+    //     ASSERT(aa == a);
+    //     ASSERT(bb == b);
+    // }
+    // {
+    //     uint32_t *ptr = (uint32_t *)alloc_phy(0, 4);
+    //     ptr = (uint32_t *)(TOHM((uint32_t)(ptr)));
+    //     *ptr = 1;
+    //     set_vm_attr(((uint32_t)ptr), get_cr3(), PAGE_USER_ACCESS | PAGE_WRITE);
+
+    //     bool vma = alloc_phy_for_vma(0x3f000000, get_cr3());
+    //     uint32_t *x = (uint32_t *)0x3f000000;
+    //     *x = 111;
+    //     kprintf("%x %x!!!\n", ptr, *x);
+    // }
+    for (int i = 0; i < 1; i++)
     {
-        uint32_t *ptr = (uint32_t *)alloc_phy(0, 4);
-        ptr = (uint32_t *)(TOHM((uint32_t)(ptr)));
-        *ptr = 1;
-        set_vm_attr(((uint32_t)ptr), get_cr3(), PAGE_USER_ACCESS | PAGE_WRITE);
+        uint32_t pre_a, pre_b;
+        pre_a = get_phy_total_free();
+        pre_b = get_phy_total_alloc();
 
-        bool vma = alloc_phy_for_vma(0x3f000000, get_cr3());
-        uint32_t *x = (uint32_t *)0x3f000000;
-        *x = 111;
-        kprintf("%x %x!!!\n", ptr, *x);
+        uint32_t t = (uint32_t)alloc_phy(0, 1 + i * 3);
+
+        free_phy(t);
+
+        t = (uint32_t)alloc_phy_4k(0, 1 + i * 3);
+        ASSERT((t & 0x3ff) == 0)
+        free_phy(t);
+
+        t = (uint32_t)alloc_phy(i * 0x10000, 1 + i * 3);
+        ASSERT(t >= (i * 0x10000));
+        free_phy(t);
+
+        t = (uint32_t)alloc_phy_4k(i * 0x10000, 1 + i * 3);
+        ASSERT(t >= (i * 0x10000));
+        ASSERT((t & 0x3ff) == 0)
+        free_phy(t);
+
+        uint32_t aft_a, afte_b;
+        aft_a = get_phy_total_free();
+        afte_b = get_phy_total_alloc();
+        ASSERT(pre_a == aft_a);
+        ASSERT(pre_b == afte_b);
     }
-    // for (int i = 0; i < 0; i++)
-    // {
-    //     uint32_t pre_a, pre_b;
-    //     pre_a = get_phy_total_free();
-    //     pre_b = get_phy_total_alloc();
+    {
+        uint32_t pre_a, pre_b;
+        pre_a = get_phy_total_free();
+        pre_b = get_phy_total_alloc();
 
-    //     uint32_t t = (uint32_t)alloc_phy(0, 1 + i * 3);
-
-    //     free_phy(t);
-
-    //     t = (uint32_t)alloc_phy_4k(0, 1 + i * 3);
-    //     ASSERT((t & 0x3ff) == 0)
-    //     free_phy(t);
-
-    //     t = (uint32_t)alloc_phy(i * 0x10000, 1 + i * 3);
-    //     ASSERT(t >= (i * 0x10000));
-    //     free_phy(t);
-
-    //     t = (uint32_t)alloc_phy_4k(i * 0x10000, 1 + i * 3);
-    //     ASSERT(t >= (i * 0x10000));
-    //     ASSERT((t & 0x3ff) == 0)
-    //     free_phy(t);
-
-    //     uint32_t aft_a, afte_b;
-    //     aft_a = get_phy_total_free();
-    //     afte_b = get_phy_total_alloc();
-    //     ASSERT(pre_a == aft_a);
-    //     ASSERT(pre_b == afte_b);
-    // }
-    // {
-    //     uint32_t pre_a, pre_b;
-    //     pre_a = get_phy_total_free();
-    //     pre_b = get_phy_total_alloc();
-
-    //     int ptrs[1024];
-    //     for (int i = 0; i < 1024; i++)
-    //     {
-    //         if (i == 1023)
-    //         {
-    //             kprintf("1");
-    //         }
-    //         ptrs[i] = alloc_phy(i, 1 + i * 3);
-    //     }
-    //     for (int i = 1024 - 1; i >= 0; i--)
-    //     {
-    //         kprintf("%d %d", i, ptrs[i]);
-    //         free_phy(ptrs[i]);
-    //     }
-    //     uint32_t aft_a, afte_b;
-    //     aft_a = get_phy_total_free();
-    //     afte_b = get_phy_total_alloc();
-    //     ASSERT(pre_a == aft_a);
-    //     ASSERT(pre_b == afte_b);
-    // }
+        int ptrs[1024];
+        for (int i = 0; i < 1024; i++)
+        {
+            if (i == 1023)
+            {
+                kprintf("1");
+            }
+            ptrs[i] = alloc_phy(i, 1 + i * 3);
+        }
+        for (int i = 1024 - 1; i >= 0; i--)
+        {
+            kprintf("%d %d", i, ptrs[i]);
+            free_phy(ptrs[i]);
+        }
+        uint32_t aft_a, afte_b;
+        aft_a = get_phy_total_free();
+        afte_b = get_phy_total_alloc();
+        ASSERT(pre_a == aft_a);
+        ASSERT(pre_b == afte_b);
+    }
     {
         uint32_t a = get_phy_total_free();
         uint32_t b = get_phy_total_alloc();
