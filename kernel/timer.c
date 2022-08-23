@@ -26,7 +26,3 @@ void init_timer()
 {
     frequency_set(CONTRER0_PORT, COUNTER0_NO, READ_WRITE_LATCH, COUNTER_MODE, COUNTER0_VALUE);
 }
-int bcd2bin(int bcd)
-{
-    return ((bcd >> 4) * 10 + (bcd & 0x0f));
-}
