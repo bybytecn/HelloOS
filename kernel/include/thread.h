@@ -3,8 +3,8 @@
 #define THREAD_STACK_SIZE 4096
 #include "../../common/include/types.h"
 #include "../../boot/include/gdt.h"
-#define TICKET_USER 0x1000 // R3线程默认的时间片
-#define TICKET_KERNEL 0x2000
+#define TICKET_USER 0x100 // R3线程默认的时间片
+#define TICKET_KERNEL 0x200
 #define DPL_KERNEL 0
 #define DPL_USER 3
 enum thread_status

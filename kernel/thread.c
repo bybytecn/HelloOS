@@ -94,7 +94,7 @@ static struct thread_t *pop_queue(struct thread_queue_t *queue)
         queue->head->prev = 0;
     }
     queue->size--;
-    ASSERT(free(node))
+    // ASSERT(free(node))
     return thread;
 }
 static struct thread_t *front_queue(struct thread_queue_t *queue)
@@ -150,14 +150,24 @@ void timer_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint3
                 p->thread->gs = gs;
                 p->thread->ss = ss;
                 p->thread->ticket--;
-                *((uint32_t *)(esp - 4)) = eflags;
-                *((uint32_t *)(esp - 8)) = cs;
-                *((uint32_t *)(esp - 12)) = eip;
-                switch_r0(ss, gs, es, fs, ds, ebp, edi, esi, edx, ecx, ebx, eax, esp);
                 break;
             }
             p = p->next;
         }
+        p = running_queue.head;
+        if (0 == p->thread->ticket)
+        {
+            //时间片用完
+            struct thread_t *t = pop_queue(&running_queue); //不释放内存，因为还需要用
+
+            t->ticket = TICKET_KERNEL;
+            push_queue(&running_queue, t);
+        }
+        struct thread_t *t = front_queue(&running_queue);
+        *((uint32_t *)(t->esp - 4)) = t->eflags;
+        *((uint32_t *)(t->esp - 8)) = t->cs;
+        *((uint32_t *)(t->esp - 12)) = t->eip;
+        switch_r0(t->ss, t->gs, t->es, t->fs, t->ds, t->ebp, t->edi, t->esi, t->edx, t->ecx, t->ebx, t->eax, t->esp);
         // never reach here
         PANIC("never reach here");
     }
