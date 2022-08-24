@@ -1,4 +1,5 @@
 #include "./include/cmos.h"
+#include "./include/ioutil.h"
 static uint32_t bcd2bin(uint32_t bcd)
 {
 	return ((bcd >> 4) * 10 + (bcd & 0x0f));

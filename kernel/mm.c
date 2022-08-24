@@ -188,6 +188,16 @@ void *alloc_phy_4k(uint32_t start_addr, uint32_t size)
 #endif
     return 0;
 }
+
+// 分配物理内存，空间在0-4M之间，成功返回内存地址，失败返回0
+void *alloc_phy_kernel(uint32_t start_addr, uint32_t size)
+{
+    uint32_t alloc_addr = (uint32_t)alloc_phy(start_addr, size);
+    ASSERT(alloc_addr < KERNEL_LIMIT);
+    return (void *)alloc_addr;
+}
+
+// 分配物理内存
 void *alloc_phy(uint32_t start_addr, uint32_t size)
 {
     merge();
@@ -505,6 +515,7 @@ uint32_t clean_cr3(uint32_t cr3)
     uint32_t total = 0;
     ASSERT(0 == (cr3 & 0x3ff));
     ASSERT(cr3 < KERNEL_LIMIT)
+    switch_cr3(cr3);
 
     uint32_t *pde = (uint32_t *)TOHM(cr3);
     for (int i = 0; i < 0x300; i++)
@@ -527,141 +538,154 @@ uint32_t clean_cr3(uint32_t cr3)
     total += 0x1000;
     ASSERT(free_phy((uint32_t)(cr3)))
 
+    switch_cr3(g_def_cr3);
     return total;
 }
 
-// 初始化虚拟内存Bitmap
-void init_vm(uint32_t cr3)
+// 清理管理虚拟内存占用的物理页 和clean_cr3函数配合清除进程内存空间
+void clean_vm(uint32_t cr3)
 {
-    ASSERT((0 != VM_START_ADDR) && (0 == (VM_START_ADDR & 0x3ff)))
-    uint32_t cnt = VM_START_ADDR / 0x1000;
-    uint32_t s = 0;
-    for (int i = 0; i < cnt; i++)
-    {
-        ASSERT(alloc_phy_for_vma(s, cr3))
-        s += 0x1000;
-    }
-    // 虚拟内存[0,VM_START_ADDR)是bitmap用来管理虚拟内存的
     switch_cr3(cr3);
-    memset((void *)0, 0, VM_START_ADDR);
+    // 清理虚拟内存结构链表占用的内存
+    struct vm_controll_t *p = (struct vm_controll_t *)((VM_CONTROLL_BLOCK_START));
+    struct vm_free_block_t *free = (struct vm_free_block_t *)(p->free_block);
+    struct vm_alloc_block_t *alloc = (struct vm_alloc_block_t *)(p->alloc_block);
+    while (free)
+    {
+        struct vm_free_block_t *t = free->next;
+        ASSERT(free_phy((uint32_t)(TOPY(free))))
+        free = t;
+    }
+    while (alloc)
+    {
+        struct vm_alloc_block_t *t = alloc->next;
+        ASSERT(free_phy((uint32_t)(TOPY(alloc))))
+        alloc = t;
+    }
     switch_cr3(g_def_cr3);
 }
-
-//
-void reverse_bitmap(uint32_t start_group_idx, uint32_t start_bit_idx, uint32_t end_group_idx, uint32_t end_bit_idx)
+// 初始化虚拟内存管理
+void init_vm(uint32_t cr3)
 {
-    ASSERT(start_group_idx <= end_group_idx)
-    ASSERT(start_bit_idx < 8)
-    ASSERT(end_bit_idx < 8)
+    switch_cr3(cr3);
+    alloc_phy_for_vma_range(VM_CONTROLL_BLOCK_START, sizeof(struct vm_controll_t), cr3);
+    struct vm_controll_t *p = (struct vm_controll_t *)(VM_CONTROLL_BLOCK_START);
+    p->alloc_block = (struct vm_alloc_block_t *)TOHM(alloc_phy_kernel(0, sizeof(struct vm_alloc_block_t)));
+    p->alloc_block->start = 0;
+    p->alloc_block->size = 0;
+    p->alloc_block->next = 0;
 
-    if (start_group_idx == end_group_idx)
-    {
-        uint8_t *p = (uint8_t *)(start_group_idx);
+    p->free_block = (struct vm_free_block_t *)TOHM(alloc_phy_kernel(0, sizeof(struct vm_free_block_t)));
+    p->free_block->start = VM_START_ADDR;
+    p->free_block->size = VM_SIZE;
+    p->free_block->next = 0;
 
-        for (int i = start_bit_idx; i <= end_bit_idx; i++)
-        {
-            *p ^= (1 << i);
-        }
-        return;
-    }
-    for (int k = start_group_idx; k <= end_group_idx; k++)
+    switch_cr3(g_def_cr3);
+}
+static bool vm_alloc_block_add(uint32_t start, uint32_t size, uint32_t cr3)
+{
+    switch_cr3(cr3);
+    struct vm_controll_t *p = (struct vm_controll_t *)(VM_CONTROLL_BLOCK_START);
+    struct vm_alloc_block_t *block = p->alloc_block;
+    while (block != 0)
     {
-        // 用的虚拟内存访问
-        uint8_t *p = (uint8_t *)(k);
-        if (k < end_group_idx)
+        if (block->size == 0)
         {
-            *p ^= (0xff << start_bit_idx);
-            continue;
+            block->start = start;
+            block->size = size;
+            block->next = 0;
+            switch_cr3(g_def_cr3);
+            return TRUE;
         }
-        else
-        {
-            for (int i = 0; i <= end_bit_idx; i++)
-            {
-                *p ^= (1 << i);
-            }
-        }
+        block = block->next;
     }
-    return;
+    block = p->alloc_block;
+    while (block->next != 0)
+    {
+        block = block->next;
+    }
+    block->next = (struct vm_alloc_block_t *)TOHM(alloc_phy_kernel(0, sizeof(struct vm_alloc_block_t)));
+    block->next->start = start;
+    block->next->size = size;
+    block->next->next = 0;
+    switch_cr3(g_def_cr3);
+    return TRUE;
 }
 
+// 释放使用的虚拟内存
+static bool vm_free_block_add(uint32_t start, uint32_t cr3)
+{
+    switch_cr3(cr3);
+    struct vm_controll_t *p = (struct vm_controll_t *)(VM_CONTROLL_BLOCK_START);
+    struct vm_free_block_t *block = p->free_block;
+    struct vm_alloc_block_t *alloc_block = p->alloc_block;
+    //  获取对应的大小，看能不能合并到大块里
+    uint32_t block_size = 0;
+    while (alloc_block)
+    {
+        if (alloc_block->start == start)
+        {
+            block_size = alloc_block->size;
+            alloc_block->size = 0;
+            break;
+        }
+        alloc_block = alloc_block->next;
+    }
+    // 寻找合并块
+    if (block_size)
+    {
+        block = p->free_block;
+        while (block)
+        {
+            if (block->start == start + block_size)
+            {
+                block->size += block->size;
+                block->start -= block->size;
+                free_phy_for_vma_range(start, block_size, cr3);
+                switch_cr3(g_def_cr3);
+                return TRUE;
+            }
+            block = block->next;
+        }
+    }
+    block = p->free_block;
+    // 新建一块插入到尾部
+    while (block->next)
+    {
+        block = block->next;
+    }
+    block->next = (struct vm_free_block_t *)TOHM(alloc_phy_kernel(0, sizeof(struct vm_free_block_t)));
+    block->next->start = start;
+    block->next->size = block_size;
+    block->next->next = 0;
+    free_phy_for_vma_range(start, block_size, cr3);
+    switch_cr3(g_def_cr3);
+    return TRUE;
+}
 // 分配虚拟内存，分配实际的物理页 返回4k对齐的虚拟地址
 void *alloc_vm(uint32_t cr3, uint32_t size)
 {
     ASSERT(0 == (cr3 & 0x3ff));
     ASSERT(cr3 < KERNEL_LIMIT);
-
-    // 计算实际需要的内存大小和页数
-    uint32_t need_size = size + sizeof(struct vm_controll_t);
-    uint32_t need_page_cnt = need_size / (VM_BITMAP_PAGE_SIZE);
-    // 页数不够，需要多分配一页
-    if (0 != (need_size % (VM_BITMAP_PAGE_SIZE)))
-    {
-        need_page_cnt++;
-    }
-    // 记录连续的0的个数
-    uint32_t continue_free_bit_cnt = 0;
-    int32_t start_bit_offset = -1;
     switch_cr3(cr3);
+    struct vm_controll_t *p = (struct vm_controll_t *)(VM_CONTROLL_BLOCK_START);
+    struct vm_alloc_block_t *alloc = p->alloc_block;
+    struct vm_free_block_t *free = p->free_block;
 
-    // [0,VM_START_ADDR)虚拟内存空间是bitmap用来管理虚拟内存的
-    for (int i = 0; i < VM_START_ADDR; i++)
+    // free列表中找到合适的块
+    while (free)
     {
-        uint8_t *p = (uint8_t *)i;
-        if ((*p) != 0xff)
+        if (free->size >= size)
         {
-            for (int j = 0; j < 8; j++)
-            {
-                if (((*p) & (1 << j)) == 0)
-                {
-                    if (start_bit_offset == -1)
-                    {
-                        start_bit_offset = i * 8 + j;
-                        continue_free_bit_cnt = 1;
-                    }
-                    else
-                    {
-                        continue_free_bit_cnt++;
-                    }
-                    // 找到了足够的连续空闲页
-                    if (continue_free_bit_cnt == need_page_cnt)
-                    {
-                        uint32_t start_group_idx = start_bit_offset / 8;
-                        uint32_t start_bit_idx = start_bit_offset % 8;
-
-                        uint32_t end_group_idx = i;
-                        uint32_t end_bit_idx = j;
-
-                        // 标记这段内存为已使用
-                        reverse_bitmap(start_group_idx, start_bit_idx, end_group_idx, end_bit_idx);
-
-                        //
-                        uint32_t target_addr = VM_START_ADDR + start_bit_offset * VM_BITMAP_PAGE_SIZE;
-
-                        // 写入控制块
-                        struct vm_controll_t *vmc = (struct vm_controll_t *)target_addr;
-
-                        // 分配实际的物理页
-                        alloc_phy_for_vma_range((uint32_t)vmc, need_size, cr3);
-
-                        vmc->size = need_size;
-                        vmc->start_addr = ((uint32_t)vmc) + sizeof(struct vm_controll_t);
-                        vmc->start_bit_offset = start_bit_offset;
-                        vmc->end_bit_offset = end_group_idx * 8 + end_bit_idx;
-                        ASSERT((((uint32_t)vmc) & 0x3ff) == 0);
-
-                        uint32_t ret = vmc->start_addr;
-                        // 切换回默认内核的页表
-                        switch_cr3(g_def_cr3);
-                        return (void *)ret;
-                    }
-                }
-                else
-                {
-                    start_bit_offset = -1;
-                    continue_free_bit_cnt = 0;
-                }
-            }
+            uint32_t start = free->start;
+            free->start += size;
+            free->size -= size;
+            vm_alloc_block_add(start, size, cr3);
+            alloc_phy_for_vma_range(start, size, cr3);
+            switch_cr3(g_def_cr3);
+            return (void *)start;
         }
+        free = free->next;
     }
     switch_cr3(g_def_cr3);
 #ifdef DEBUG
@@ -669,25 +693,28 @@ void *alloc_vm(uint32_t cr3, uint32_t size)
 #endif
     return 0;
 }
-// 释放虚拟内存
-bool free_vm(uint32_t vm_addr, uint32_t cr3)
+void *alloc(uint32_t size)
+{
+    return alloc_vm(get_cr3(), size);
+}
+
+bool free(void *ptr)
+{
+    return free_vm(get_cr3(), ptr);
+}
+// 释放虚拟内存 注：此函数不会释放物理内存，因为PTE列表里的物理页表项可能还在，只能施放对应的一个物理页
+bool free_vm(uint32_t cr3, uint32_t vm_addr)
 {
     ASSERT(0 == (cr3 & 0x3ff));
     ASSERT(cr3 < KERNEL_LIMIT);
-    switch_cr3(cr3);
-    struct vm_controll_t *vmc = (struct vm_controll_t *)(vm_addr - sizeof(struct vm_controll_t));
-    ASSERT(0 == (((uint32_t)vmc) & 0x3ff));
-    uint32_t start_group_idx = vmc->start_bit_offset / 8;
-    uint32_t start_bit_idx = vmc->start_bit_offset % 8;
-    uint32_t end_group_idx = vmc->end_bit_offset / 8;
-    uint32_t end_bit_idx = vmc->end_bit_offset % 8;
-
-    // 标记为未使用
-    reverse_bitmap(start_group_idx, start_bit_idx, end_group_idx, end_bit_idx);
-
-    // 释放占用的物理页
-    free_phy_for_vma_range((uint32_t)vmc, vmc->size, cr3);
-    switch_cr3(g_def_cr3);
+    if (FALSE == vm_free_block_add(vm_addr, cr3))
+    {
+#ifdef DEBUG
+        kprintf("free_vm failed");
+#endif
+        return FALSE;
+    }
+    return TRUE;
 }
 // 为一片虚拟内存分配实际的物理页
 void alloc_phy_for_vma_range(uint32_t vm_addr, uint32_t size, uint32_t cr3)
@@ -707,7 +734,6 @@ void free_phy_for_vma_range(uint32_t vm_addr, uint32_t size, uint32_t cr3)
 {
     ASSERT(0 == (cr3 & 0x3ff));
     ASSERT(cr3 < KERNEL_LIMIT);
-    ASSERT((((uint32_t)vm_addr) & 0xfff) == 0);
 
     // 所在的起始页
     uint32_t start = vm_addr & 0xfffff000;
@@ -727,23 +753,12 @@ uint32_t get_vm_total_alloc(uint32_t cr3)
     ASSERT(cr3 < KERNEL_LIMIT);
     switch_cr3(cr3);
     uint32_t ret = 0;
-    for (int i = 0; i < VM_START_ADDR; i++)
+    struct vm_controll_t *p = (struct vm_controll_t *)(VM_CONTROLL_BLOCK_START);
+    struct vm_alloc_block_t *q = p->alloc_block;
+    while (q)
     {
-        uint8_t *p = (uint8_t *)(i);
-        if (*p == 0xff)
-        {
-            ret += VM_BITMAP_PAGE_SIZE * 8;
-        }
-        else
-        {
-            for (int j = 0; j < 8; j++)
-            {
-                if (((*p) & (1 << j)) == 1)
-                {
-                    ret += VM_BITMAP_PAGE_SIZE;
-                }
-            }
-        }
+        ret += q->size;
+        q = q->next;
     }
     switch_cr3(g_def_cr3);
     return ret;
@@ -753,30 +768,48 @@ void test_mm()
 {
     {
         // uint32_t aa = get_phy_total_free();
-        // uint32_t bb = get_phy_total_alloc();
-
-        // uint32_t cr3 = create_cr3();
-        // init_vm(cr3);
-        // uint32_t a = get_vm_total_alloc(cr3);
-
-        // uint32_t *p = alloc_vm(cr3, 30500);
-        // uint32_t b = get_vm_total_alloc(cr3);
-        // uint32_t *p2 = alloc_vm(cr3, 70591);
-        // b = get_vm_total_alloc(cr3);
-        // uint32_t *p3 = alloc_vm(cr3, 8105);
-        // b = get_vm_total_alloc(cr3);
-        // free_vm((uint32_t)p3, cr3);
-        // free_vm((uint32_t)p, cr3);
-        // free_vm((uint32_t)p2, cr3);
-
-        // b = get_vm_total_alloc(cr3);
-        // ASSERT(a == b)
-
-        // clean_cr3(cr3);
+        uint32_t bb = get_vm_total_alloc(get_cr3());
+        int p[10];
+        for (int i = 0; i < 10; i++)
+        {
+            p[i] = (int)alloc(0x1000);
+            ASSERT(p[i]);
+        }
+        for (int i = 0; i < 10; i++)
+        {
+            free((void *)p[i]);
+        }
         // uint32_t aaa = get_phy_total_free();
-        // uint32_t bbb = get_phy_total_alloc();
+        uint32_t bbb = get_vm_total_alloc(get_cr3());
         // ASSERT(aaa == aa);
-        // ASSERT(bbb == bb);
+        ASSERT(bbb == bb);
+    }
+    {
+        uint32_t aa = get_phy_total_free();
+        uint32_t bb = get_phy_total_alloc();
+
+        uint32_t cr3 = create_cr3();
+        init_vm(cr3);
+        uint32_t a = get_vm_total_alloc(cr3);
+
+        uint32_t *p = alloc_vm(cr3, 30500);
+        uint32_t b = get_vm_total_alloc(cr3);
+        uint32_t *p2 = alloc_vm(cr3, 70591);
+        b = get_vm_total_alloc(cr3);
+        uint32_t *p3 = alloc_vm(cr3, 8105);
+        b = get_vm_total_alloc(cr3);
+        free_vm(cr3, (uint32_t)p3);
+        free_vm(cr3, (uint32_t)p);
+        free_vm(cr3, (uint32_t)p2);
+
+        b = get_vm_total_alloc(cr3);
+        ASSERT(a == b)
+        clean_vm(cr3);
+        clean_cr3(cr3);
+        uint32_t aaa = get_phy_total_free();
+        uint32_t bbb = get_phy_total_alloc();
+        ASSERT(aaa == aa);
+        ASSERT(bbb == bb);
     }
     // {
     //     uint32_t cr3 = create_cr3();
@@ -862,16 +895,16 @@ void test_mm()
         pre_a = get_phy_total_free();
         pre_b = get_phy_total_alloc();
 
-        int ptrs[1024];
-        for (int i = 0; i < 1024; i++)
+        int ptrs[100];
+        for (int i = 0; i < 100; i++)
         {
-            if (i == 1023)
+            if (i == 99)
             {
                 kprintf("1");
             }
             ptrs[i] = alloc_phy(i, 1 + i * 3);
         }
-        for (int i = 1024 - 1; i >= 0; i--)
+        for (int i = 99; i >= 0; i--)
         {
             kprintf("%d %d", i, ptrs[i]);
             free_phy(ptrs[i]);
@@ -899,7 +932,7 @@ void test_mm()
 
         alloc_phy_for_vma(0x5f00, cr3);
         alloc_phy_for_vma(0xaf000000, cr3);
-        for (int i = 0; i < 80; i++)
+        for (int i = 0; i < 20; i++)
         {
             alloc_phy_for_vma(0x1000000 + i * 0x111f1a, cr3);
         }
