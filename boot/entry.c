@@ -6,6 +6,13 @@
 #include "../kernel/include/pic.h"
 #include "../kernel/include/timer.h"
 #include "../kernel/include/thread.h"
+void test()
+{
+    while (1)
+    {
+        kprintf("test");
+    }
+}
 int entry(struct multiboot_t *mtb)
 {
     init_debug(mtb);
@@ -16,11 +23,12 @@ int entry(struct multiboot_t *mtb)
     init_timer();
     init_schduler();
     kprintf("HelloOS");
-
+    create_thread("test", test);
     asm volatile("sti");
     while (1)
     {
-        asm volatile("hlt");
+        kprintf("main");
+        // asm volatile("hlt");
     };
     return 0;
 }

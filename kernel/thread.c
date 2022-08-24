@@ -2,6 +2,7 @@
 #include "./include/mm.h"
 #include "./include/debug.h"
 #include "../common/include/strings.h"
+uint32_t g_tid_increase = 0;
 uint32_t g_main_thread_stack_top;
 struct thread_queue_t ready_queue;   // 就绪队列
 struct thread_queue_t io_queue;      // IO等待队列
@@ -21,7 +22,7 @@ static void init_main_thread()
                  : "=r"(g_main_thread_stack_top));
     g_main_thread_stack_top = g_main_thread_stack_top & 0xFFFFF000;
     struct thread_t *main = alloc(sizeof(struct thread_t));
-    main->tid = 1;
+    main->tid = find_free_tid();
     main->esp = g_main_thread_stack_top;
     main->cs = SELECTOR_KERNEL_CODE;
     main->ds = SELECTOR_KERNEL_DATA;
@@ -185,4 +186,37 @@ uint32_t get_running_cpl()
     asm volatile("movl %%cs, %0"
                  : "=r"(cpl));
     return cpl & 0x3;
+}
+uint32_t find_free_tid()
+{
+    return ++g_tid_increase;
+}
+// 启动线程
+void create_thread(char *name, void *entry)
+{
+    struct thread_t *th = alloc(sizeof(struct thread_t));
+    uint32_t esp = (uint32_t)alloc(THREAD_STACK_SIZE);
+    // ASSERT(0 == (esp & 0xfff));
+    th->tid = find_free_tid();
+    th->esp = (esp + THREAD_STACK_SIZE - 1);
+    th->eip = (uint32_t)entry;
+    th->cs = SELECTOR_KERNEL_CODE;
+    th->ds = SELECTOR_KERNEL_DATA;
+    th->es = SELECTOR_KERNEL_DATA;
+    th->fs = SELECTOR_KERNEL_DATA;
+    th->gs = SELECTOR_KERNEL_DATA;
+    th->ss = SELECTOR_KERNEL_DATA;
+    th->eflags = 0x293; //随便设置的，主要是IF位要打开
+
+    strcpy(th->name, name);
+    th->status = THREAD_RUNNING;
+    if (get_running_cpl() == DPL_KERNEL)
+    {
+        th->ticket = TICKET_KERNEL;
+    }
+    else
+    {
+        th->ticket = TICKET_USER;
+    }
+    push_queue(&running_queue, th);
 }

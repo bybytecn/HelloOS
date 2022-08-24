@@ -39,9 +39,13 @@ struct thread_queue_t
     uint32_t size;
 };
 
+void create_thread(char *name, void *entry);
+
 void init_schduler();
 
 uint32_t get_running_cpl();
+
+uint32_t find_free_tid();
 
 void switch_r0(uint32_t esp, uint32_t eax, uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi, uint32_t edi, uint32_t ebp, uint32_t ds, uint32_t fs, uint32_t es, uint32_t gs, uint32_t ss);
 #endif
