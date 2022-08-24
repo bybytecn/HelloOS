@@ -700,7 +700,7 @@ void *alloc(uint32_t size)
 
 bool free(void *ptr)
 {
-    return free_vm(get_cr3(), ptr);
+    return free_vm(get_cr3(), (uint32_t)ptr);
 }
 // 释放虚拟内存 注：此函数不会释放物理内存，因为PTE列表里的物理页表项可能还在，只能施放对应的一个物理页
 bool free_vm(uint32_t cr3, uint32_t vm_addr)

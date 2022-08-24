@@ -1,6 +1,6 @@
 #include "./include/gdt.h"
 #include "../common/include/strings.h"
-struct gdt_t g_gdt_table[5] __attribute__((section(".init_data")));
+struct gdt_t g_gdt_table[6] __attribute__((section(".init_data")));
 struct gdt_ptr_t g_gdt_entry __attribute__((section(".init_data")));
 void __attribute__((section(".init_text"))) init_gdt()
 {

@@ -5,7 +5,7 @@ global g_idt_table
 section .data
 g_idt_table:
 
-; 特权级没发生变化用的
+
 %macro idt_r0 2
 section .text
 global idt_%1_entry
@@ -14,6 +14,7 @@ idt_%1_entry:
 %if %2==0
 push 0
 %endif
+;eflags, cs, eip, esp, eax, ebx, ecx, edx, esi, edi, ebp, ds, fs, es, gs, ss
 
 push %1 ;Vector
 push eax
@@ -25,7 +26,7 @@ push edi
 push ebp
 push esp
 
-; 通知PIC继续处理中断
+; ; 通知PIC继续处理中断
 mov al,0x20
 out 0x20,al
 out 0xa0,al

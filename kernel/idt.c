@@ -20,8 +20,19 @@ void init_idt()
                  :
                  : "m"(g_idt_desc));
 }
-// 特权级没发生变化时用的处理函数
+void timer_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint32_t edx, uint32_t ecx, uint32_t ebx, uint32_t eax, uint32_t eip, uint32_t cs, uint32_t eflags);
 void idt_r0_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint32_t edx, uint32_t ecx, uint32_t ebx, uint32_t eax, uint32_t vecNum, uint32_t errCode, uint32_t eip, uint32_t cs, uint32_t eflags)
 {
-    // kprintf("vecNum:%d, errCode:%d, eip:%x, cs:%x, eflags:%x \n", vecNum, errCode, eip, cs, eflags);
+    if (vecNum == 0x27 || vecNum == 0x2f)
+    {           // 0x2f是从片8259A上的最后一个irq引脚，保留
+        return; // IRQ7和IRQ15会产生伪中断(spurious interrupt),无须处理。
+    }
+#ifdef DEBUG
+    kprintf("vecNum:%d, errCode:%d, eip:%x, cs:%x, eflags:%x \n", vecNum, errCode, eip, cs, eflags);
+#endif
+    if (vecNum == 0x20)
+    {
+        timer_handler(esp, ebp, edi, esi, edx, ecx, ebx, eax, eip, cs, eflags);
+        return;
+    }
 }

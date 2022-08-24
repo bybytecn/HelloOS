@@ -51,9 +51,11 @@ next:
     ; 直接call entry 好像有问题，，，
     mov eax,entry
     push 0
+
+    cli ;关中断
     jmp eax
 section .init_text
-    times 8024 db 0      ; 进入entry后使用的栈空间
+    times 4096 db 0      ; 进入entry后使用的栈空间
     stack:
 section .init_data
     ptr_mtb dd 0
