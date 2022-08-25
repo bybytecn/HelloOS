@@ -8,11 +8,13 @@
 #include "../kernel/include/thread.h"
 void test()
 {
-    for (int i = 0; i < 10; i++)
+    int sum = 0;
+    for (int i = 0; i < 30000; i++)
     {
-        kprintf("2");
+        sum += i;
+        kprintf("2 %d\n", sum);
     }
-    kprintf("1");
+    kprintf("1 %d\n", sum);
     exit_thread();
 }
 int entry(struct multiboot_t *mtb)
@@ -29,8 +31,8 @@ int entry(struct multiboot_t *mtb)
     asm volatile("sti");
     while (1)
     {
-        // kprintf("1");
-        //  asm volatile("hlt");
+        // kprintf("1\n");
+        asm volatile("hlt");
     };
     return 0;
 }
