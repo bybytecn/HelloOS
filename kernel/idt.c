@@ -1,6 +1,7 @@
 #include "./include/idt.h"
 #include "../boot/include/gdt.h"
 #include "./include/console.h"
+#include "./include/debug.h"
 extern int g_idt_table;
 struct interupt_descriptor g_idt_desc;
 void init_idt()
@@ -34,5 +35,9 @@ void idt_r0_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint
     {
         timer_handler(esp, ebp, edi, esi, edx, ecx, ebx, eax, eip, cs, eflags);
         return;
+    }
+    else if (vecNum == 14)
+    {
+        PANIC("Page fault!");
     }
 }

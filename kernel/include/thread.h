@@ -12,7 +12,7 @@ enum thread_status
     THREAD_RUNNING, // 线程正在运行
     THREAD_IO,      // 线程正在阻塞中，等待IO
     THREAD_SLEEP,   // 线程正在阻塞中，等待唤醒
-    THREAD_DIED,    // 线程已经死亡
+    THREAD_EXIT,    // 线程已经死亡
 };
 struct thread_t
 {
@@ -43,9 +43,15 @@ void create_thread(char *name, void *entry);
 
 void init_schduler();
 
+void exit_thread();
+
+struct thread_t *running_thread();
+
 uint32_t get_running_cpl();
 
 uint32_t find_free_tid();
+
+void schdule();
 
 void switch_r0(uint32_t esp, uint32_t eax, uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi, uint32_t edi, uint32_t ebp, uint32_t ds, uint32_t fs, uint32_t es, uint32_t gs, uint32_t ss);
 #endif

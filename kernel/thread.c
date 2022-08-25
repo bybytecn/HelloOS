@@ -10,8 +10,8 @@ struct thread_queue_t sleep_queue;   // 睡眠队列
 struct thread_queue_t running_queue; // 运行队列
 static void init_queue(struct thread_queue_t *queue);
 static void push_queue(struct thread_queue_t *queue, struct thread_t *thread);
-static struct thread_t *pop_queue(struct thread_queue_t *queue);
-static struct thread_t *front_queue(struct thread_queue_t *queue);
+static struct thread_node_t *pop_queue(struct thread_queue_t *queue);
+static struct thread_node_t *front_queue(struct thread_queue_t *queue);
 static bool is_queue_empty(struct thread_queue_t *queue);
 
 // 初始化主线程
@@ -79,7 +79,7 @@ static void push_queue(struct thread_queue_t *queue, struct thread_t *thread)
     }
     queue->size++;
 }
-static struct thread_t *pop_queue(struct thread_queue_t *queue)
+static struct thread_node_t *pop_queue(struct thread_queue_t *queue)
 {
     // pop
     struct thread_node_t *node = queue->head;
@@ -96,11 +96,11 @@ static struct thread_t *pop_queue(struct thread_queue_t *queue)
     }
     queue->size--;
     // ASSERT(free(node))
-    return thread;
+    return node;
 }
-static struct thread_t *front_queue(struct thread_queue_t *queue)
+static struct thread_node_t *front_queue(struct thread_queue_t *queue)
 {
-    return queue->head->thread;
+    return queue->head;
 }
 
 // 8253中断时执行此函数，调度线程
@@ -155,16 +155,39 @@ void timer_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint3
             }
             p = p->next;
         }
+        ASSERT((is_queue_empty(&running_queue) == FALSE));
         p = running_queue.head;
         if (0 == p->thread->ticket)
         {
             //时间片用完
-            struct thread_t *t = pop_queue(&running_queue); //不释放内存，因为还需要用
+            struct thread_node_t *t = pop_queue(&running_queue); //不释放内存，因为还需要用
 
-            t->ticket = TICKET_KERNEL;
-            push_queue(&running_queue, t);
+            t->thread->ticket = TICKET_KERNEL;
+            push_queue(&running_queue, t->thread);
         }
-        struct thread_t *t = front_queue(&running_queue);
+        struct thread_node_t *tn = running_queue.head;
+        struct thread_t *t = 0;
+        while (TRUE)
+        {
+            struct thread_node_t *tmp = front_queue(&running_queue);
+            if (tmp->thread->status == THREAD_EXIT)
+            {
+                // 释放内存
+                pop_queue(&running_queue);
+                ASSERT(free(tmp));
+                continue;
+            }
+            else if (tmp->thread->status == THREAD_RUNNING)
+            {
+                t = tmp->thread;
+                break;
+            }
+            else
+            {
+                PANIC("thread status error");
+            }
+        }
+        ASSERT(t != 0);
         *((uint32_t *)(t->esp - 4)) = t->eflags;
         *((uint32_t *)(t->esp - 8)) = t->cs;
         *((uint32_t *)(t->esp - 12)) = t->eip;
@@ -195,6 +218,7 @@ uint32_t find_free_tid()
 void create_thread(char *name, void *entry)
 {
     struct thread_t *th = alloc(sizeof(struct thread_t));
+    // TODO 需要支持4k页对齐的分配函数
     uint32_t esp = (uint32_t)alloc(THREAD_STACK_SIZE);
     // ASSERT(0 == (esp & 0xfff));
     th->tid = find_free_tid();
@@ -219,4 +243,59 @@ void create_thread(char *name, void *entry)
         th->ticket = TICKET_USER;
     }
     push_queue(&running_queue, th);
+}
+
+struct thread_t *running_thread()
+{
+    asm volatile("cli");
+    struct thread_t *r = 0;
+    uint32_t esp = 0;
+    asm volatile("movl %%esp, %0"
+                 : "=r"(esp));
+    uint32_t stack_top = esp & 0xFFFFF000;
+    struct thread_node_t *p = running_queue.head;
+    while (p)
+    {
+        if ((p->thread->esp & 0xFFFFF000) == stack_top)
+        {
+            r = p->thread;
+            asm volatile("sti");
+            return r;
+        }
+        p = p->next;
+    }
+#ifdef DEBUG
+    PANIC("running_thread: not found");
+#endif
+    asm volatile("sti");
+    return 0;
+}
+
+void exit_thread()
+{
+
+    //在运行队列中找到结点，修改状态
+    struct thread_t *t = running_thread();
+    ASSERT(0 != t);
+    //关中断
+    asm volatile("cli");
+    t->status = THREAD_EXIT;
+    //开中断
+    asm volatile("sti");
+    schdule();
+    while(1);
+}
+
+// 放弃时间片，先让cpu处理其他任务
+void schdule()
+{
+
+    // 在运行队列中找到结点，修改状态
+    // struct thread_t *t = running_thread();
+    // ASSERT(0 != t);
+    // asm volatile("cli");
+    // t->ticket = 0;
+    // asm volatile("sti");
+
+    // asm volatile("int $32");
 }

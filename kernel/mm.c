@@ -658,7 +658,7 @@ static bool vm_free_block_add(uint32_t start, uint32_t cr3)
     block->next->start = start;
     block->next->size = block_size;
     block->next->next = 0;
-    free_phy_for_vma_range(start, block_size, cr3);
+    // free_phy_for_vma_range(start, block_size, cr3);
     switch_cr3(g_def_cr3);
     return TRUE;
 }
@@ -734,7 +734,7 @@ void free_phy_for_vma_range(uint32_t vm_addr, uint32_t size, uint32_t cr3)
 {
     ASSERT(0 == (cr3 & 0x3ff));
     ASSERT(cr3 < KERNEL_LIMIT);
-
+    ASSERT(0 == (vm_addr & 0x3ff));
     // 所在的起始页
     uint32_t start = vm_addr & 0xfffff000;
     uint32_t end = (vm_addr + size - 1) & 0xfffff000;
