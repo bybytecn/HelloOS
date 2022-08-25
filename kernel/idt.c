@@ -28,9 +28,6 @@ void idt_r0_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint
     {           // 0x2f是从片8259A上的最后一个irq引脚，保留
         return; // IRQ7和IRQ15会产生伪中断(spurious interrupt),无须处理。
     }
-#ifdef DEBUG
-    kprintf("vecNum:%d, errCode:%d, eip:%x, cs:%x, eflags:%x \n", vecNum, errCode, eip, cs, eflags);
-#endif
     if (vecNum == 0x20)
     {
         timer_handler(esp, ebp, edi, esi, edx, ecx, ebx, eax, eip, cs, eflags);
@@ -38,6 +35,9 @@ void idt_r0_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint
     }
     else if (vecNum == 14)
     {
+#ifdef DEBUG
+        kprintf("vecNum:%d, errCode:%d, eip:%x, cs:%x, eflags:%x \n", vecNum, errCode, eip, cs, eflags);
+#endif
         PANIC("Page fault!");
     }
 }
