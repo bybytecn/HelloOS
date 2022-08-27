@@ -4,9 +4,10 @@
 #include "../../common/include/types.h"
 #include "../../boot/include/gdt.h"
 #define TICKET_USER 0x100 // R3线程默认的时间片
-#define TICKET_KERNEL 0x200
+#define TICKET_KERNEL 0x1
 #define DPL_KERNEL 0
 #define DPL_USER 3
+#define LOCK_SIZE 3
 enum thread_status
 {
     THREAD_RUNNING, // 线程正在运行
@@ -38,20 +39,35 @@ struct thread_queue_t
     struct thread_node_t *head, *tail;
     uint32_t size;
 };
-
+struct lock_t
+{
+    uint32_t semaphore;
+    uint32_t waiter_tid[LOCK_SIZE];
+    uint32_t size;
+    uint32_t front;
+    uint32_t rear;
+};
 void create_thread(char *name, void *entry);
 
 void init_schduler();
 
 void exit_thread();
 
-struct thread_t *running_thread();
+struct thread_node_t *running_thread();
 
 uint32_t get_running_cpl();
 
 uint32_t find_free_tid();
 
-void schdule();
+void to_schdule();
+
+void block();
+
+void lock(struct lock_t *lock);
+
+void unlock(struct lock_t *lock);
+
+void init_lock(struct lock_t *lock);
 
 void switch_r0(uint32_t esp, uint32_t eax, uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi, uint32_t edi, uint32_t ebp, uint32_t ds, uint32_t fs, uint32_t es, uint32_t gs, uint32_t ss);
 #endif

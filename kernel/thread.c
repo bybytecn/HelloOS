@@ -4,23 +4,25 @@
 #include "../common/include/strings.h"
 uint32_t g_tid_increase = 0;
 uint32_t g_main_thread_stack_top;
-struct thread_queue_t ready_queue;   // 就绪队列
-struct thread_queue_t io_queue;      // IO等待队列
-struct thread_queue_t sleep_queue;   // 睡眠队列
+// struct thread_queue_t ready_queue;   // 就绪队列
+// struct thread_queue_t io_queue;      // IO等待队列
+// struct thread_queue_t sleep_queue;   // 睡眠队列
+struct thread_queue_t blocked_queue; //阻塞队列
 struct thread_queue_t running_queue; // 运行队列
 static void init_queue(struct thread_queue_t *queue);
 static void push_queue(struct thread_queue_t *queue, struct thread_t *thread);
 static struct thread_node_t *pop_queue(struct thread_queue_t *queue);
 static struct thread_node_t *front_queue(struct thread_queue_t *queue);
 static bool is_queue_empty(struct thread_queue_t *queue);
-static void append_node_queue(struct thread_queue_t *queue, struct thread_node_t *node);
+static void append_rear_queue(struct thread_queue_t *queue, struct thread_node_t *node);
+static void append_front_queue(struct thread_queue_t *queue, struct thread_node_t *node);
 // 初始化主线程
 static void init_main_thread()
 {
     // get esp into g_main_thread_stack_top
     asm volatile("mov %%esp, %0"
                  : "=r"(g_main_thread_stack_top));
-    g_main_thread_stack_top = g_main_thread_stack_top & 0xFFFFF000;
+    g_main_thread_stack_top = (g_main_thread_stack_top & 0xFFFFF000) | 0xfff;
     struct thread_t *main = alloc(sizeof(struct thread_t));
     main->tid = find_free_tid();
     main->esp = g_main_thread_stack_top;
@@ -39,10 +41,11 @@ static void init_main_thread()
 
 void init_schduler()
 {
-    init_queue(&ready_queue);
-    init_queue(&io_queue);
-    init_queue(&sleep_queue);
+    // init_queue(&ready_queue);
+    // init_queue(&io_queue);
+    // init_queue(&sleep_queue);
     init_queue(&running_queue);
+    init_queue(&blocked_queue);
 
     init_main_thread();
 }
@@ -82,7 +85,7 @@ static void push_queue(struct thread_queue_t *queue, struct thread_t *thread)
 }
 
 // 追加结点到队尾
-static void append_node_queue(struct thread_queue_t *queue, struct thread_node_t *node)
+static void append_rear_queue(struct thread_queue_t *queue, struct thread_node_t *node)
 {
     // push
     if (queue->size == 0)
@@ -98,6 +101,8 @@ static void append_node_queue(struct thread_queue_t *queue, struct thread_node_t
     }
     queue->size++;
 }
+
+// 从队头取出一个结点
 static struct thread_node_t *pop_queue(struct thread_queue_t *queue)
 {
     // pop
@@ -117,13 +122,73 @@ static struct thread_node_t *pop_queue(struct thread_queue_t *queue)
     // ASSERT(free(node))
     return node;
 }
+
+// 返回队头结点
 static struct thread_node_t *front_queue(struct thread_queue_t *queue)
 {
     return queue->head;
 }
 
+// 追加结点到队头
+static void append_front_queue(struct thread_queue_t *queue, struct thread_node_t *node)
+{
+    // push
+    if (queue->size == 0)
+    {
+        queue->head = node;
+        queue->tail = node;
+    }
+    else
+    {
+        node->next = queue->head;
+        queue->head->prev = node;
+        queue->head = node;
+    }
+    queue->size++;
+}
+
+// 根据线程id查找线程
+static struct thread_node_t *element_queue_tid(struct thread_queue_t *queue, uint32_t tid)
+{
+    struct thread_node_t *node = queue->head;
+    while (node != 0)
+    {
+        if (node->thread->tid == tid)
+        {
+            return node;
+        }
+        node = node->next;
+    }
+#ifdef DEBUG
+    printf("not found tid:%d\n", tid);
+#endif
+    return 0;
+}
+
+// 从队列中删除结点
+static void remove_node_queue(struct thread_queue_t *queue, struct thread_node_t *t)
+{
+    if (t->prev)
+    {
+        t->prev->next = t->next;
+        if (t->next)
+        {
+            t->next->prev = t->prev;
+        }
+        else
+        {
+            queue->tail = t->prev;
+        }
+        queue->size--;
+    }
+    else
+    {
+        ASSERT(t == pop_queue(queue));
+    }
+}
+
 // 8253中断时执行此函数，调度线程
-void timer_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint32_t edx, uint32_t ecx, uint32_t ebx, uint32_t eax, uint32_t eip, uint32_t cs, uint32_t eflags)
+void schdule(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint32_t edx, uint32_t ecx, uint32_t ebx, uint32_t eax, uint32_t eip, uint32_t cs, uint32_t eflags)
 {
     uint32_t ds, es, fs, gs, ss;
     asm volatile("movl %%ds, %0"
@@ -145,7 +210,8 @@ void timer_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint3
     if (FALSE == level_change)
     {
         // 这个才是中断前的esp的值
-        esp += (12 * 4);
+        asm volatile("nop");
+        esp += (48);
         uint32_t stack_top = esp & 0xFFFFF000;
         struct thread_node_t *p = running_queue.head;
         while (p)
@@ -174,33 +240,28 @@ void timer_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint3
             }
             p = p->next;
         }
+#ifdef DEBUG
+        kprintf("cur %s ", p->thread->name);
+#endif
         ASSERT((is_queue_empty(&running_queue) == FALSE));
         p = running_queue.head;
-        if (0 == p->thread->ticket)
-        {
-            //时间片用完
-            struct thread_node_t *t = pop_queue(&running_queue); //不释放内存，因为还需要用
-
-            t->thread->ticket = TICKET_KERNEL;
-
-            // 放到running_queue队尾
-            append_node_queue(&running_queue, t);
-        }
-        struct thread_node_t *tn = running_queue.head;
         struct thread_t *t = 0;
-        // 选出下一个要运行的线程
         while (TRUE)
         {
             struct thread_node_t *tmp = front_queue(&running_queue);
-            if (tmp->thread->status == THREAD_EXIT)
+            if (tmp->thread->status == THREAD_RUNNING)
             {
-                // 释放内存
-                pop_queue(&running_queue);
-                ASSERT(free(tmp));
-                continue;
-            }
-            else if (tmp->thread->status == THREAD_RUNNING)
-            {
+                if (0 == tmp->thread->ticket)
+                {
+                    //时间片用完
+                    struct thread_node_t *t = pop_queue(&running_queue); //不释放内存，因为还需要用
+
+                    t->thread->ticket = TICKET_KERNEL;
+
+                    // 放到running_queue队尾
+                    append_rear_queue(&running_queue, t);
+                    continue;
+                }
                 t = tmp->thread;
                 break;
             }
@@ -209,6 +270,10 @@ void timer_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint3
                 PANIC("thread status error");
             }
         }
+#ifdef DEBUG
+        kprintf("next %s \n", t->name);
+#endif
+        ASSERT(t->ticket != 0)
         ASSERT(t != 0);
         *((uint32_t *)(t->esp - 4)) = t->eflags;
         *((uint32_t *)(t->esp - 8)) = t->cs;
@@ -236,6 +301,7 @@ uint32_t find_free_tid()
 {
     return ++g_tid_increase;
 }
+
 // 启动线程  需要关中断或者加锁使用，不能被打断
 void create_thread(char *name, void *entry)
 {
@@ -267,28 +333,27 @@ void create_thread(char *name, void *entry)
     push_queue(&running_queue, th);
 }
 
-// 需要关中断或者加锁使用，不能被打断
-struct thread_t *running_thread()
+// 返回当前的线程，需要关中断或者加锁使用，不能被打断
+struct thread_node_t *running_thread()
 {
-    struct thread_t *r = 0;
     uint32_t esp = 0;
     asm volatile("movl %%esp, %0"
                  : "=r"(esp));
     uint32_t stack_top = esp & 0xFFFFF000;
     struct thread_node_t *p = running_queue.head;
-    while (p)
-    {
-        if ((p->thread->esp & 0xFFFFF000) == stack_top)
-        {
-            r = p->thread;
-            return r;
-        }
-        p = p->next;
-    }
-#ifdef DEBUG
-    PANIC("running_thread: not found");
-#endif
-    return 0;
+    ASSERT((p->thread->esp & 0xFFFFF000) == stack_top)
+    //     while (p)
+    //     {
+    //         if ((p->thread->esp & 0xFFFFF000) == stack_top)
+    //         {
+    //             return p;
+    //         }
+    //         p = p->next;
+    //     }
+    // #ifdef DEBUG
+    //     PANIC("running_thread: not found");
+    // #endif
+    return p;
 }
 
 // 线程退出时需要调用
@@ -296,23 +361,114 @@ void exit_thread()
 {
     asm volatile("cli");
     //在运行队列中找到结点，修改状态
-    struct thread_t *t = running_thread();
+    struct thread_node_t *t = running_thread();
     ASSERT(0 != t);
-    //关中断
-    t->status = THREAD_EXIT;
-    //开中断
+    //删除该结点
+    remove_node_queue(&running_queue, t);
+    // 释放内存
+    free(t->thread);
+    free(t);
     asm volatile("sti");
-    schdule();
 }
 
-// 放弃时间片，先让cpu处理其他任务
-void schdule()
+void init_lock(struct lock_t *lock)
+{
+    lock->semaphore = 1;
+    lock->size = 0;
+    lock->front = 0;
+    lock->rear = 0;
+}
+
+// 阻塞当前线程
+void block()
 {
     asm volatile("cli");
-    // 在运行队列中找到结点，修改状态
-    struct thread_t *t = running_thread();
-    ASSERT(0 != t);
-    t->ticket = 0;
+    struct thread_node_t *t = running_thread();
+    //  从运行队列中移除
+    remove_node_queue(&running_queue, t);
+    // 加入到阻塞队列里
+    append_rear_queue(&blocked_queue, t);
+    to_schdule();
+}
+
+// 清空当前线程的时间片  需关中断
+void clean_cur_cpu_ticket()
+{
+    struct thread_node_t *tt = running_thread();
+    tt->thread->ticket = 1;
+}
+
+// 停止当前线程，运行指定线程 需关中断
+void resume_thread_with_tid(uint32_t tid)
+{
+    clean_cur_cpu_ticket();
+    struct thread_node_t *t = element_queue_tid(&blocked_queue, tid);
+    if (t)
+    {
+        t->thread->ticket = 1;
+        remove_node_queue(&blocked_queue, t);
+        append_front_queue(&running_queue, t);
+        to_schdule();
+        return;
+    }
+    PANIC("resume_thread_with_tid: not found");
+}
+
+uint32_t pop_lock(struct lock_t *lock)
+{
+    if (lock->size == 0)
+    {
+        return 0;
+    }
+    lock->size--;
+    uint32_t ret = lock->front;
+    lock->front = (lock->front + 1) % LOCK_SIZE;
+    return lock->waiter_tid[ret];
+}
+uint32_t append_lock(struct lock_t *lock, uint32_t tid)
+{
+    if (lock->size == LOCK_SIZE)
+    {
+        return 0;
+    }
+    lock->waiter_tid[lock->rear] = tid;
+    lock->rear = (lock->rear + 1) % LOCK_SIZE;
+    lock->size++;
+    return 1;
+}
+
+// 加锁
+void lock(struct lock_t *lock)
+{
+    asm volatile("cli");
+    if (lock->semaphore > 0)
+    {
+        lock->semaphore--;
+    }
+    else
+    {
+        struct thread_node_t *t = running_thread();
+        append_lock(lock, t->thread->tid);
+        block();
+        asm volatile("cli");
+        ASSERT(lock->semaphore > 0);
+        lock->semaphore--;
+    }
     asm volatile("sti");
-    asm volatile("int $32");
+}
+
+// 解锁
+void unlock(struct lock_t *lock)
+{
+    asm volatile("cli");
+    lock->semaphore++;
+    uint32_t tmp = 0;
+    if (lock->size > 0)
+    {
+        tmp = pop_lock(lock);
+    }
+    if (tmp != 0)
+    {
+        resume_thread_with_tid(tmp);
+    }
 }

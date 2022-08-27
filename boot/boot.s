@@ -38,7 +38,8 @@ next:
     and ebx,0xfffffffe
     ; c0000000-0xc03fffff -> 0x00000000-0x003fffff
     mov [eax],ebx
-    mov esp,stack-1
+    mov esp,stack
+    or esp,0x00000fff
     mov ebp,0
     add esp,0xc0000000
     add ebp,0xc0000000
@@ -54,8 +55,8 @@ next:
 
     cli ;关中断
     jmp eax
-section .init_text
-    times 4096 db 0      ; 进入entry后使用的栈空间
-    stack:
+section .init_stack
+stack:
+    times 8192 db 0      ; 进入entry后使用的栈空间
 section .init_data
     ptr_mtb dd 0

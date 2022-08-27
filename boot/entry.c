@@ -6,15 +6,38 @@
 #include "../kernel/include/pic.h"
 #include "../kernel/include/timer.h"
 #include "../kernel/include/thread.h"
+struct lock_t lk;
+uint32_t testg = 3;
 void test()
 {
-    int sum = 0;
-    for (int i = 0; i < 30000; i++)
+    while (1)
     {
-        sum += i;
-        kprintf("2 %d\n", sum);
-    }
-    kprintf("1 %d\n", sum);
+        lock(&lk);
+        if (testg % 2 == 0)
+        {
+            kprintf("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n");
+        }
+        testg++;
+        for (int z = 0; z < 100000; z++)
+            ;
+        testg--;
+        kprintf("11\n");
+        unlock(&lk);
+    };
+    exit_thread();
+}
+void test2()
+{
+    while (1)
+    {
+        lock(&lk);
+        if (testg % 2 == 0)
+        {
+            kprintf("111111111111111111111111111111111111111111111\n");
+        }
+        kprintf("33333333333333333333333333333\n");
+        unlock(&lk);
+    };
     exit_thread();
 }
 int entry(struct multiboot_t *mtb)
@@ -28,11 +51,18 @@ int entry(struct multiboot_t *mtb)
     init_schduler();
     kprintf("HelloOS");
     create_thread("test", test);
+    create_thread("test2", test2);
+    init_lock(&lk);
     asm volatile("sti");
     while (1)
     {
-        // kprintf("1\n");
-        asm volatile("hlt");
+        lock(&lk);
+        testg++;
+        for (int z = 0; z < 100; z++)
+            ;
+        testg--;
+        kprintf("222222222\n");
+        unlock(&lk);
     };
     return 0;
 }

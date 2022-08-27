@@ -21,7 +21,7 @@ void init_idt()
                  :
                  : "m"(g_idt_desc));
 }
-void timer_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint32_t edx, uint32_t ecx, uint32_t ebx, uint32_t eax, uint32_t eip, uint32_t cs, uint32_t eflags);
+void schdule(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint32_t edx, uint32_t ecx, uint32_t ebx, uint32_t eax, uint32_t eip, uint32_t cs, uint32_t eflags);
 void idt_r0_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint32_t edx, uint32_t ecx, uint32_t ebx, uint32_t eax, uint32_t vecNum, uint32_t errCode, uint32_t eip, uint32_t cs, uint32_t eflags)
 {
     if (vecNum == 0x27 || vecNum == 0x2f)
@@ -30,7 +30,7 @@ void idt_r0_handler(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint
     }
     if (vecNum == 0x20)
     {
-        timer_handler(esp, ebp, edi, esi, edx, ecx, ebx, eax, eip, cs, eflags);
+        schdule(esp, ebp, edi, esi, edx, ecx, ebx, eax, eip, cs, eflags);
         return;
     }
     else if (vecNum == 14)
