@@ -437,7 +437,7 @@ uint32_t append_lock(struct lock_t *lock, uint32_t tid)
     return 1;
 }
 
-// 加锁
+// 加锁 bug!!
 void lock(struct lock_t *lock)
 {
     asm volatile("cli");
@@ -457,7 +457,7 @@ void lock(struct lock_t *lock)
     asm volatile("sti");
 }
 
-// 解锁
+// 解锁 bug!!
 void unlock(struct lock_t *lock)
 {
     asm volatile("cli");
