@@ -213,7 +213,18 @@ void schdule(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint32_t ed
         asm volatile("nop");
         esp += (48);
         uint32_t stack_top = esp & 0xFFFFF000;
+        ASSERT((is_queue_empty(&running_queue) == FALSE));
         struct thread_node_t *p = running_queue.head;
+        //检查循环
+        struct thread_node_t *check_loop = p->next;
+        while (check_loop != 0)
+        {
+            if (check_loop != p)
+            {
+                PANIC("running_queue in loop");
+            }
+            check_loop = check_loop->next;
+        }
         while (p)
         {
             if ((p->thread->esp & 0xFFFFF000) == stack_top)
@@ -243,7 +254,6 @@ void schdule(uint32_t esp, uint32_t ebp, uint32_t edi, uint32_t esi, uint32_t ed
 #ifdef DEBUG
         kprintf("cur %s ", p->thread->name);
 #endif
-        ASSERT((is_queue_empty(&running_queue) == FALSE));
         p = running_queue.head;
         struct thread_t *t = 0;
         while (TRUE)
